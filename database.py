@@ -14,8 +14,15 @@ from performance_monitor import time_function, record_metric
 logger = logging.getLogger(__name__)
 
 class SimpleDB:
-    def __init__(self, db_path="product_adder.db"):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        if db_path is None:
+            # For Vercel serverless environment, use /tmp directory
+            if os.environ.get('VERCEL'):
+                self.db_path = "/tmp/product_adder.db"
+            else:
+                self.db_path = "product_adder.db"
+        else:
+            self.db_path = db_path
         self.conn = None
     
     def connect(self):

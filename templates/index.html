@@ -150,9 +150,29 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🛍️ Product Adder - Shopify Catalog Manager</h1>
+            <h1>Shopify JDS Catalog Manager</h1>
             <p class="subtitle">Discover new products from JDS Wholesale and add them to your Shopify store</p>
         </div>
+
+        {% if setup_required %}
+        <div class="setup-notice" style="background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 20px; border-radius: 10px; margin-bottom: 30px;">
+            <h3>⚠️ Setup Required</h3>
+            <p>Your application is deployed but needs configuration. Please set up the following environment variables in your Vercel dashboard:</p>
+            <ul>
+                <li><strong>SHOPIFY_STORE</strong> - Your Shopify store domain (e.g., your-store.myshopify.com)</li>
+                <li><strong>SHOPIFY_ACCESS_TOKEN</strong> - Your Shopify API access token</li>
+                <li><strong>EXTERNAL_API_TOKEN</strong> - Your JDS API token</li>
+                <li><strong>EXTERNAL_API_URL</strong> - JDS API URL (optional, has default)</li>
+            </ul>
+            <p><strong>How to set environment variables:</strong></p>
+            <ol>
+                <li>Go to your <a href="https://vercel.com/ppg0291s-projects/product_adder/settings" target="_blank">Vercel project settings</a></li>
+                <li>Click on "Environment Variables" tab</li>
+                <li>Add each variable with its value</li>
+                <li>Redeploy your application</li>
+            </ol>
+        </div>
+        {% endif %}
 
         <div class="stats-grid">
             <div class="stat-card">
