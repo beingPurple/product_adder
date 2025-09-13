@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Product Adder{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Product Adder Dashboard</h1>
+        <p class="lead">Monitor JDS Wholesale catalog and manage Shopify product additions</p>
+    </div>
+</div>
+
+<!-- Status Cards -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">JDS Products</h5>
+                <h2 class="text-primary" id="jds-count">{{ stats.get('jds_products_count', 0) }}</h2>
+                <p class="card-text">Products in JDS catalog</p>
+                <button class="btn btn-outline-primary btn-sm" id="sync-jds-btn-card">
+                    <span class="spinner-border spinner-border-sm d-none" id="jds-spinner"></span>
+                    Sync JDS
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">Shopify Products</h5>
+                <h2 class="text-success" id="shopify-count">{{ stats.get('shopify_products_count', 0) }}</h2>
+                <p class="card-text">Products in Shopify store</p>
+                <button class="btn btn-outline-success btn-sm" id="sync-shopify-btn-card">
+                    <span class="spinner-border spinner-border-sm d-none" id="shopify-spinner"></span>
+                    Sync Shopify
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">Unmatched Products</h5>
+                <h2 class="text-warning" id="unmatched-count">{{ stats.get('unmatched_count', 0) }}</h2>
+                <p class="card-text">New products to add</p>
+                <button class="btn btn-outline-warning btn-sm" id="view-unmatched-btn" disabled>
+                    View Products
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Data Synchronization</h6>
+                        <p class="text-muted">Sync product data from external APIs</p>
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-primary" id="sync-all-btn">
+                                <span class="spinner-border spinner-border-sm d-none" id="sync-all-spinner"></span>
+                                Sync All Data
+                            </button>
+                            <button class="btn btn-outline-secondary" id="check-status-btn">
+                                Check Status
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Product Management</h6>
+                        <p class="text-muted">Manage unmatched products (Coming in Phase 2)</p>
+                        <button class="btn btn-outline-secondary" disabled>
+                            View Unmatched Products
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- System Status -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">System Status</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="d-flex align-items-center">
+                            <div class="badge bg-secondary me-2" id="jds-status">Unknown</div>
+                            <span>JDS API</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="d-flex align-items-center">
+                            <div class="badge bg-secondary me-2" id="shopify-status">Unknown</div>
+                            <span>Shopify API</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="d-flex align-items-center">
+                            <div class="badge bg-secondary me-2" id="database-status">Unknown</div>
+                            <span>Database</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="d-flex align-items-center">
+                            <div class="badge bg-secondary me-2" id="overall-status">Unknown</div>
+                            <span>Overall</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Error Display -->
+{% if error %}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="alert alert-danger" role="alert">
+            <h6 class="alert-heading">Error</h6>
+            <p class="mb-0">{{ error }}</p>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Initialize dashboard when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    checkSystemStatus();
+    
+    // Set up event listeners
+    document.getElementById('sync-jds-btn').addEventListener('click', syncJDS);
+    document.getElementById('sync-shopify-btn').addEventListener('click', syncShopify);
+    document.getElementById('sync-jds-btn-card').addEventListener('click', syncJDS);
+    document.getElementById('sync-shopify-btn-card').addEventListener('click', syncShopify);
+    document.getElementById('sync-all-btn').addEventListener('click', syncAll);
+    document.getElementById('check-status-btn').addEventListener('click', checkSystemStatus);
+});
+
+function checkSystemStatus() {
+    fetch('/api/status')
+        .then(response => response.json())
+        .then(data => {
+            updateStatusBadge('jds-status', data.jds_connected);
+            updateStatusBadge('shopify-status', data.shopify_connected);
+            updateStatusBadge('database-status', data.database_connected);
+            updateStatusBadge('overall-status', data.status === 'healthy');
+            updateConnectionStatus(data.status === 'healthy');
+        })
+        .catch(error => {
+            console.error('Error checking status:', error);
+            updateStatusBadge('overall-status', false);
+            updateConnectionStatus(false);
+        });
+}
+
+function updateStatusBadge(elementId, isConnected) {
+    const badge = document.getElementById(elementId);
+    if (isConnected) {
+        badge.className = 'badge bg-success me-2';
+        badge.textContent = 'Connected';
+    } else {
+        badge.className = 'badge bg-danger me-2';
+        badge.textContent = 'Disconnected';
+    }
+}
+
+function updateConnectionStatus(isHealthy) {
+    const statusElement = document.getElementById('connection-status');
+    if (isHealthy) {
+        statusElement.className = 'badge bg-success';
+        statusElement.textContent = 'Online';
+    } else {
+        statusElement.className = 'badge bg-danger';
+        statusElement.textContent = 'Offline';
+    }
+}
+
+function syncJDS() {
+    const spinner = document.getElementById('jds-spinner');
+    const button = document.getElementById('sync-jds-btn-card');
+    
+    spinner.classList.remove('d-none');
+    button.disabled = true;
+    
+    fetch('/api/sync/jds')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('jds-count').textContent = data.data.count;
+                showAlert('success', data.message);
+            } else {
+                showAlert('danger', data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error syncing JDS:', error);
+            showAlert('danger', 'Error syncing JDS products');
+        })
+        .finally(() => {
+            spinner.classList.add('d-none');
+            button.disabled = false;
+        });
+}
+
+function syncShopify() {
+    const spinner = document.getElementById('shopify-spinner');
+    const button = document.getElementById('sync-shopify-btn-card');
+    
+    spinner.classList.remove('d-none');
+    button.disabled = true;
+    
+    fetch('/api/sync/shopify')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('shopify-count').textContent = data.data.count;
+                showAlert('success', data.message);
+            } else {
+                showAlert('danger', data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error syncing Shopify:', error);
+            showAlert('danger', 'Error syncing Shopify products');
+        })
+        .finally(() => {
+            spinner.classList.add('d-none');
+            button.disabled = false;
+        });
+}
+
+function syncAll() {
+    const spinner = document.getElementById('sync-all-spinner');
+    const button = document.getElementById('sync-all-btn');
+    
+    spinner.classList.remove('d-none');
+    button.disabled = true;
+    
+    Promise.all([
+        fetch('/api/sync/jds').then(response => response.json()),
+        fetch('/api/sync/shopify').then(response => response.json())
+    ])
+    .then(([jdsResult, shopifyResult]) => {
+        if (jdsResult.success) {
+            document.getElementById('jds-count').textContent = jdsResult.data.count;
+        }
+        if (shopifyResult.success) {
+            document.getElementById('shopify-count').textContent = shopifyResult.data.count;
+        }
+        
+        const allSuccess = jdsResult.success && shopifyResult.success;
+        showAlert(allSuccess ? 'success' : 'warning', 
+                 allSuccess ? 'All data synced successfully' : 'Some sync operations failed');
+    })
+    .catch(error => {
+        console.error('Error syncing all data:', error);
+        showAlert('danger', 'Error syncing data');
+    })
+    .finally(() => {
+        spinner.classList.add('d-none');
+        button.disabled = false;
+    });
+}
+
+function showAlert(type, message) {
+    const alertContainer = document.querySelector('.container');
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    alertContainer.insertBefore(alertDiv, alertContainer.firstChild);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+</script>
+{% endblock %}

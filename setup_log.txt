@@ -1,0 +1,56 @@
+[12:26:10] 🚀 Product Adder - Setup Test
+[12:26:10] ==================================================
+[12:26:10] Python version: 3.13.7 (main, Aug 14 2025, 00:00:00) [GCC 15.2.1 20250808 (Red Hat 15.2.1-1)]
+[12:26:10] Current directory: /home/norllr/dev/morganicsPricing/product_adder
+[12:26:10] ⚠️  Not running in virtual environment
+[12:26:10] Testing basic imports...
+[12:26:10] ✅ Flask imported: 3.0.0
+[12:26:10] ✅ Requests imported: 2.31.0
+[12:26:10] Testing database imports...
+[12:26:11] ❌ Unexpected error: Class <class 'sqlalchemy.sql.elements.SQLCoreOperations'> directly inherits TypingOnly but has additional attributes {'__static_attributes__', '__firstlineno__'}.
+[12:26:11] Traceback (most recent call last):
+  File "/home/norllr/dev/morganicsPricing/product_adder/test_setup.py", line 47, in main
+    from database import db, JDSProduct, ShopifyProduct
+  File "/home/norllr/dev/morganicsPricing/product_adder/database.py", line 7, in <module>
+    from flask_sqlalchemy import SQLAlchemy
+  File "/home/norllr/.local/lib/python3.13/site-packages/flask_sqlalchemy/__init__.py", line 5, in <module>
+    from .extension import SQLAlchemy
+  File "/home/norllr/.local/lib/python3.13/site-packages/flask_sqlalchemy/extension.py", line 9, in <module>
+    import sqlalchemy as sa
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/__init__.py", line 13, in <module>
+    from .engine import AdaptedConnection as AdaptedConnection
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/engine/__init__.py", line 18, in <module>
+    from . import events as events
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/engine/events.py", line 19, in <module>
+    from .base import Connection
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 30, in <module>
+    from .interfaces import BindTyping
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/engine/interfaces.py", line 38, in <module>
+    from ..sql.compiler import Compiled as Compiled
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/sql/__init__.py", line 14, in <module>
+    from .compiler import COLLECT_CARTESIAN_PRODUCTS as COLLECT_CARTESIAN_PRODUCTS
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/sql/compiler.py", line 61, in <module>
+    from . import crud
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/sql/crud.py", line 34, in <module>
+    from . import dml
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/sql/dml.py", line 34, in <module>
+    from . import util as sql_util
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/sql/util.py", line 46, in <module>
+    from .ddl import sort_tables as sort_tables  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/sql/ddl.py", line 30, in <module>
+    from .elements import ClauseElement
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/sql/elements.py", line 808, in <module>
+    class SQLCoreOperations(Generic[_T_co], ColumnOperators, TypingOnly):
+    ...<472 lines>...
+                ...
+  File "/usr/lib64/python3.13/typing.py", line 1257, in _generic_init_subclass
+    super(Generic, cls).__init_subclass__(*args, **kwargs)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/home/norllr/.local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 1988, in __init_subclass__
+    raise AssertionError(
+    ...<2 lines>...
+    )
+AssertionError: Class <class 'sqlalchemy.sql.elements.SQLCoreOperations'> directly inherits TypingOnly but has additional attributes {'__static_attributes__', '__firstlineno__'}.
+
+[12:26:11] Test completed with status: FAILED

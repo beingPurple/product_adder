@@ -1,0 +1,7 @@
+Python version: 3.13.5 (main, Jun 12 2025, 00:00:00) [GCC 15.1.1 20250521 (Red Hat 15.1.1-2)]
+Python executable: /home/norllr/AppImages/cursor.appimage
+Current working directory: /home/norllr/dev/morganicsPricing/product_adder
+Hello from file test!
+Flask version: 3.0.0
+SQLAlchemy import error: Class <class 'sqlalchemy.sql.elements.SQLCoreOperations'> directly inherits TypingOnly but has additional attributes {'__firstlineno__', '__static_attributes__'}.
+Flask-SQLAlchemy import error: Class <class 'sqlalchemy.sql.elements.SQLCoreOperations'> directly inherits TypingOnly but has additional attributes {'__firstlineno__', '__static_attributes__'}.

@@ -1,0 +1,297 @@
+"""
+Simple database implementation using SQLite3 directly
+This avoids SQLAlchemy compatibility issues with Python 3.13
+"""
+
+import sqlite3
+import os
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+
+class SimpleDB:
+    def __init__(self, db_path="product_adder.db"):
+        self.db_path = db_path
+        self.conn = None
+    
+    def connect(self):
+        """Connect to the database"""
+        self.conn = sqlite3.connect(self.db_path)
+        self.conn.row_factory = sqlite3.Row
+        return self.conn
+    
+    def close(self):
+        """Close the database connection"""
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+    
+    def init_tables(self):
+        """Initialize database tables"""
+        try:
+            conn = self.connect()
+            cursor = conn.cursor()
+            
+            # Create JDS Products table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS jds_products (
+                    id INTEGER PRIMARY KEY,
+                    sku TEXT UNIQUE NOT NULL,
+                    name TEXT,
+                    description TEXT,
+                    case_quantity INTEGER,
+                    less_than_case_price REAL,
+                    one_case REAL,
+                    five_cases REAL,
+                    ten_cases REAL,
+                    twenty_cases REAL,
+                    forty_cases REAL,
+                    image_url TEXT,
+                    thumbnail_url TEXT,
+                    quick_image_url TEXT,
+                    available_quantity INTEGER,
+                    local_quantity INTEGER,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create Shopify Products table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS shopify_products (
+                    id INTEGER PRIMARY KEY,
+                    sku TEXT UNIQUE NOT NULL,
+                    product_id TEXT,
+                    variant_id TEXT,
+                    current_price REAL,
+                    product_title TEXT,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create indexes for better performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_jds_products_sku ON jds_products(sku)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_shopify_products_sku ON shopify_products(sku)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_jds_products_updated ON jds_products(last_updated)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_shopify_products_updated ON shopify_products(last_updated)')
+            
+            conn.commit()
+            conn.close()
+            print("Database tables created successfully")
+            return True
+            
+        except Exception as e:
+            print(f"Error creating database tables: {e}")
+            return False
+
+class JDSProduct:
+    """JDS Product model"""
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('id')
+        self.sku = kwargs.get('sku', '')
+        self.name = kwargs.get('name', '')
+        self.description = kwargs.get('description', '')
+        self.case_quantity = kwargs.get('case_quantity')
+        self.less_than_case_price = kwargs.get('less_than_case_price')
+        self.one_case = kwargs.get('one_case')
+        self.five_cases = kwargs.get('five_cases')
+        self.ten_cases = kwargs.get('ten_cases')
+        self.twenty_cases = kwargs.get('twenty_cases')
+        self.forty_cases = kwargs.get('forty_cases')
+        self.image_url = kwargs.get('image_url', '')
+        self.thumbnail_url = kwargs.get('thumbnail_url', '')
+        self.quick_image_url = kwargs.get('quick_image_url', '')
+        self.available_quantity = kwargs.get('available_quantity')
+        self.local_quantity = kwargs.get('local_quantity')
+        self.last_updated = kwargs.get('last_updated', datetime.utcnow())
+    
+    def save(self, db):
+        """Save product to database"""
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        try:
+            if self.id:
+                # Update existing product
+                cursor.execute('''
+                    UPDATE jds_products SET
+                        sku=?, name=?, description=?, case_quantity=?,
+                        less_than_case_price=?, one_case=?, five_cases=?,
+                        ten_cases=?, twenty_cases=?, forty_cases=?,
+                        image_url=?, thumbnail_url=?, quick_image_url=?,
+                        available_quantity=?, local_quantity=?, last_updated=?
+                    WHERE id=?
+                ''', (
+                    self.sku, self.name, self.description, self.case_quantity,
+                    self.less_than_case_price, self.one_case, self.five_cases,
+                    self.ten_cases, self.twenty_cases, self.forty_cases,
+                    self.image_url, self.thumbnail_url, self.quick_image_url,
+                    self.available_quantity, self.local_quantity, self.last_updated,
+                    self.id
+                ))
+            else:
+                # Insert new product
+                cursor.execute('''
+                    INSERT INTO jds_products (
+                        sku, name, description, case_quantity,
+                        less_than_case_price, one_case, five_cases,
+                        ten_cases, twenty_cases, forty_cases,
+                        image_url, thumbnail_url, quick_image_url,
+                        available_quantity, local_quantity, last_updated
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    self.sku, self.name, self.description, self.case_quantity,
+                    self.less_than_case_price, self.one_case, self.five_cases,
+                    self.ten_cases, self.twenty_cases, self.forty_cases,
+                    self.image_url, self.thumbnail_url, self.quick_image_url,
+                    self.available_quantity, self.local_quantity, self.last_updated
+                ))
+                self.id = cursor.lastrowid
+            
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            print(f"Error saving JDS product: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'sku': self.sku,
+            'name': self.name,
+            'description': self.description,
+            'case_quantity': self.case_quantity,
+            'less_than_case_price': self.less_than_case_price,
+            'one_case': self.one_case,
+            'five_cases': self.five_cases,
+            'ten_cases': self.ten_cases,
+            'twenty_cases': self.twenty_cases,
+            'forty_cases': self.forty_cases,
+            'image_url': self.image_url,
+            'thumbnail_url': self.thumbnail_url,
+            'quick_image_url': self.quick_image_url,
+            'available_quantity': self.available_quantity,
+            'local_quantity': self.local_quantity,
+            'last_updated': self.last_updated.isoformat() if self.last_updated else None
+        }
+
+class ShopifyProduct:
+    """Shopify Product model"""
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('id')
+        self.sku = kwargs.get('sku', '')
+        self.product_id = kwargs.get('product_id', '')
+        self.variant_id = kwargs.get('variant_id', '')
+        self.current_price = kwargs.get('current_price', 0.0)
+        self.product_title = kwargs.get('product_title', '')
+        self.last_updated = kwargs.get('last_updated', datetime.utcnow())
+    
+    def save(self, db):
+        """Save product to database"""
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        try:
+            if self.id:
+                # Update existing product
+                cursor.execute('''
+                    UPDATE shopify_products SET
+                        sku=?, product_id=?, variant_id=?, current_price=?,
+                        product_title=?, last_updated=?
+                    WHERE id=?
+                ''', (
+                    self.sku, self.product_id, self.variant_id, self.current_price,
+                    self.product_title, self.last_updated, self.id
+                ))
+            else:
+                # Insert new product
+                cursor.execute('''
+                    INSERT INTO shopify_products (
+                        sku, product_id, variant_id, current_price,
+                        product_title, last_updated
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    self.sku, self.product_id, self.variant_id, self.current_price,
+                    self.product_title, self.last_updated
+                ))
+                self.id = cursor.lastrowid
+            
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            print(f"Error saving Shopify product: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'sku': self.sku,
+            'product_id': self.product_id,
+            'variant_id': self.variant_id,
+            'current_price': self.current_price,
+            'product_title': self.product_title,
+            'last_updated': self.last_updated.isoformat() if self.last_updated else None
+        }
+
+# Global database instance
+db = SimpleDB()
+
+def init_db():
+    """Initialize database tables"""
+    return db.init_tables()
+
+def get_unmatched_products():
+    """Get JDS products that don't exist in Shopify"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM jds_products 
+            WHERE sku NOT IN (SELECT sku FROM shopify_products)
+        ''')
+        
+        rows = cursor.fetchall()
+        products = []
+        
+        for row in rows:
+            product = JDSProduct(**dict(row))
+            products.append(product)
+        
+        conn.close()
+        return products
+        
+    except Exception as e:
+        print(f"Error getting unmatched products: {e}")
+        return []
+
+def get_product_count(table_name):
+    """Get count of products in specified table"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        if table_name == 'jds':
+            cursor.execute('SELECT COUNT(*) FROM jds_products')
+        elif table_name == 'shopify':
+            cursor.execute('SELECT COUNT(*) FROM shopify_products')
+        else:
+            return 0
+        
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+        
+    except Exception as e:
+        print(f"Error getting product count for {table_name}: {e}")
+        return 0
