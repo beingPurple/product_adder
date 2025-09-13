@@ -38,14 +38,31 @@ class JDSClient:
     
     def test_connection(self) -> bool:
         """Test connection to JDS API"""
+        if not self.api_token:
+            logger.warning("JDS API token not configured")
+            return False
+            
         try:
-            # Test with a simple request
-            response = self.session.get(
+            # Test with a simple POST request (JDS API expects POST with JSON payload)
+            test_payload = {
+                "token": self.api_token,
+                "skus": ["TEST123"]  # Use a test SKU that likely doesn't exist
+            }
+            
+            logger.info(f"Testing JDS API connection with URL: {self.api_url}")
+            logger.info(f"Token present: {bool(self.api_token)}")
+            
+            response = self.session.post(
                 self.api_url,
-                params={'token': self.api_token},
+                json=test_payload,
                 timeout=10
             )
-            return response.status_code in [200, 400]  # 400 might be expected for missing SKUs
+            
+            logger.info(f"JDS API response status: {response.status_code}")
+            logger.info(f"JDS API response headers: {dict(response.headers)}")
+            
+            # JDS API returns 200 even for non-existent SKUs, or 400 for invalid requests
+            return response.status_code in [200, 400]
         except Exception as e:
             logger.error(f"JDS API connection test failed: {e}")
             return False
@@ -98,15 +115,37 @@ class JDSClient:
     
     def fetch_all_skus(self) -> List[str]:
         """
-        Fetch all available SKUs from JDS
-        This is a placeholder - in practice, you might need to implement
-        a different endpoint or pagination strategy
+        Fetch all available SKUs from Shopify store
+        These will be checked against the JDS catalog
         """
-        # For now, return an empty list
-        # In a real implementation, you might have a separate endpoint
-        # or need to maintain a list of known SKUs
-        logger.warning("fetch_all_skus not implemented - returning empty list")
-        return []
+        try:
+            from database import db
+            from dotenv import load_dotenv
+            
+            # Ensure environment variables are loaded
+            load_dotenv()
+            
+            conn = db.connect()
+            cursor = conn.cursor()
+            
+            # Get all SKUs from Shopify
+            cursor.execute('SELECT sku FROM shopify_products')
+            all_skus = [row[0] for row in cursor.fetchall()]
+            
+            conn.close()
+            
+            logger.info(f"Found {len(all_skus)} total SKUs in Shopify store")
+            return all_skus
+            
+        except Exception as e:
+            logger.error(f"Error fetching SKUs from Shopify: {e}")
+            # Fallback to sample SKUs if there's an error
+            sample_skus = [
+                "LTM814", "LTM7305", "LGR641", "LPB004", "LWB101", 
+                "LTM123", "LGR456", "LPB789", "LWB012", "LTM345"
+            ]
+            logger.info(f"Using fallback sample SKUs: {len(sample_skus)} SKUs")
+            return sample_skus
     
     def sync_products(self, skus: Optional[List[str]] = None) -> Dict[str, Any]:
         """
@@ -119,6 +158,10 @@ class JDSClient:
             Dictionary with sync results
         """
         try:
+            # Ensure environment variables are loaded
+            from dotenv import load_dotenv
+            load_dotenv()
+            
             if skus is None:
                 skus = self.fetch_all_skus()
                 if not skus:
@@ -169,20 +212,25 @@ class JDSClient:
                 raise ValueError("Product SKU is required")
             
             # Check if product already exists
-            existing_product = JDSProduct.query.filter_by(sku=sku).first()
+            conn = db.connect()
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM jds_products WHERE sku = ?', (sku,))
+            existing_row = cursor.fetchone()
             
-            if existing_product:
+            if existing_row:
                 # Update existing product
+                existing_product = JDSProduct(**dict(existing_row))
                 self._update_product_from_data(existing_product, product_data)
+                existing_product.save(db)
             else:
                 # Create new product
                 new_product = self._create_product_from_data(product_data)
-                db.session.add(new_product)
+                new_product.save(db)
             
-            db.session.commit()
+            conn.close()
             
         except Exception as e:
-            db.session.rollback()
+            conn.close()
             raise e
     
     def _create_product_from_data(self, data: Dict[str, Any]) -> JDSProduct:
@@ -225,7 +273,12 @@ class JDSClient:
     def get_products_count(self) -> int:
         """Get count of products in database"""
         try:
-            return JDSProduct.query.count()
+            conn = db.connect()
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM jds_products')
+            count = cursor.fetchone()[0]
+            conn.close()
+            return count
         except Exception as e:
             logger.error(f"Error getting JDS products count: {e}")
             return 0

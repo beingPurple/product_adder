@@ -176,7 +176,7 @@ class JDSProduct:
             'quick_image_url': self.quick_image_url,
             'available_quantity': self.available_quantity,
             'local_quantity': self.local_quantity,
-            'last_updated': self.last_updated.isoformat() if self.last_updated else None
+            'last_updated': self.last_updated.isoformat() if hasattr(self.last_updated, 'isoformat') else self.last_updated
         }
 
 class ShopifyProduct:
@@ -240,7 +240,7 @@ class ShopifyProduct:
             'variant_id': self.variant_id,
             'current_price': self.current_price,
             'product_title': self.product_title,
-            'last_updated': self.last_updated.isoformat() if self.last_updated else None
+            'last_updated': self.last_updated.isoformat() if hasattr(self.last_updated, 'isoformat') else self.last_updated
         }
 
 # Global database instance
@@ -250,29 +250,159 @@ def init_db():
     """Initialize database tables"""
     return db.init_tables()
 
+def clean_sku_for_comparison(sku: str) -> str:
+    """Clean SKU by removing hyphen and any letters preceding it for comparison"""
+    if not sku:
+        return sku
+    
+    if '-' in sku:
+        parts = sku.split('-')
+        return parts[-1]
+    return sku
+
 def get_unmatched_products():
-    """Get JDS products that don't exist in Shopify"""
+    """Get JDS products that don't exist in Shopify (with SKU cleaning)"""
     try:
         conn = db.connect()
         cursor = conn.cursor()
         
-        cursor.execute('''
-            SELECT * FROM jds_products 
-            WHERE sku NOT IN (SELECT sku FROM shopify_products)
-        ''')
+        # Get all JDS products
+        cursor.execute('SELECT * FROM jds_products')
+        jds_rows = cursor.fetchall()
         
-        rows = cursor.fetchall()
-        products = []
+        # Get all Shopify SKUs (cleaned)
+        cursor.execute('SELECT sku FROM shopify_products')
+        shopify_rows = cursor.fetchall()
+        shopify_skus = {clean_sku_for_comparison(row[0]) for row in shopify_rows}
         
-        for row in rows:
-            product = JDSProduct(**dict(row))
-            products.append(product)
+        unmatched_products = []
+        
+        for row in jds_rows:
+            jds_product = JDSProduct(**dict(row))
+            cleaned_jds_sku = clean_sku_for_comparison(jds_product.sku)
+            
+            # Check if this JDS product exists in Shopify (using cleaned SKUs)
+            if cleaned_jds_sku not in shopify_skus:
+                unmatched_products.append(jds_product)
         
         conn.close()
-        return products
+        return unmatched_products
         
     except Exception as e:
         print(f"Error getting unmatched products: {e}")
+        return []
+
+def get_matched_products():
+    """Get JDS products that exist in Shopify (with SKU cleaning)"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Get all JDS products
+        cursor.execute('SELECT * FROM jds_products')
+        jds_rows = cursor.fetchall()
+        
+        # Get all Shopify SKUs (cleaned)
+        cursor.execute('SELECT sku FROM shopify_products')
+        shopify_rows = cursor.fetchall()
+        shopify_skus = {clean_sku_for_comparison(row[0]) for row in shopify_rows}
+        
+        matched_products = []
+        
+        for row in jds_rows:
+            jds_product = JDSProduct(**dict(row))
+            cleaned_jds_sku = clean_sku_for_comparison(jds_product.sku)
+            
+            # Check if this JDS product exists in Shopify (using cleaned SKUs)
+            if cleaned_jds_sku in shopify_skus:
+                matched_products.append(jds_product)
+        
+        conn.close()
+        return matched_products
+        
+    except Exception as e:
+        print(f"Error getting matched products: {e}")
+        return []
+
+def get_sku_comparison_stats():
+    """Get statistics about SKU matching between JDS and Shopify"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Get counts
+        cursor.execute('SELECT COUNT(*) FROM jds_products')
+        jds_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM shopify_products')
+        shopify_count = cursor.fetchone()[0]
+        
+        # Get unmatched count
+        unmatched = get_unmatched_products()
+        unmatched_count = len(unmatched)
+        
+        matched_count = jds_count - unmatched_count
+        
+        conn.close()
+        
+        return {
+            'jds_total': jds_count,
+            'shopify_total': shopify_count,
+            'matched': matched_count,
+            'unmatched': unmatched_count,
+            'match_percentage': (matched_count / jds_count * 100) if jds_count > 0 else 0
+        }
+        
+    except Exception as e:
+        print(f"Error getting SKU comparison stats: {e}")
+        return {
+            'jds_total': 0,
+            'shopify_total': 0,
+            'matched': 0,
+            'unmatched': 0,
+            'match_percentage': 0
+        }
+
+def get_shopify_price_for_sku(sku):
+    """Get current Shopify price for a given SKU"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Clean the SKU for comparison
+        cleaned_sku = clean_sku_for_comparison(sku)
+        
+        # Find matching Shopify product
+        cursor.execute('SELECT current_price FROM shopify_products WHERE sku = ?', (cleaned_sku,))
+        result = cursor.fetchone()
+        
+        conn.close()
+        
+        return result[0] if result else None
+        
+    except Exception as e:
+        print(f"Error getting Shopify price for SKU {sku}: {e}")
+        return None
+
+def get_matched_products_with_shopify_prices():
+    """Get matched products with their current Shopify prices"""
+    try:
+        matched_products = get_matched_products()
+        products_with_prices = []
+        
+        for product in matched_products:
+            product_dict = product.to_dict()
+            
+            # Get current Shopify price
+            shopify_price = get_shopify_price_for_sku(product.sku)
+            product_dict['current_shopify_price'] = shopify_price
+            
+            products_with_prices.append(product_dict)
+        
+        return products_with_prices
+        
+    except Exception as e:
+        print(f"Error getting matched products with Shopify prices: {e}")
         return []
 
 def get_product_count(table_name):

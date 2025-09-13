@@ -17,6 +17,9 @@ class ShopifyClient:
     def __init__(self):
         self.store = os.getenv('SHOPIFY_STORE')
         self.api_version = os.getenv('SHOPIFY_API_VERSION', '2023-10')
+        # Force a compatible API version if the one in env is too new
+        if self.api_version and self.api_version > '2024-01':
+            self.api_version = '2023-10'
         self.access_token = os.getenv('SHOPIFY_ACCESS_TOKEN')
         
         if not self.store or not self.access_token:
@@ -58,88 +61,68 @@ class ShopifyClient:
     
     def fetch_all_products(self) -> List[Dict[str, Any]]:
         """
-        Fetch all products from Shopify using GraphQL
+        Fetch all products from Shopify using REST API
         Uses pagination to handle large product catalogs
         """
         if not self.store or not self.access_token:
             logger.warning("Shopify credentials not configured")
             return []
-        
+
         all_products = []
-        cursor = None
-        has_next_page = True
+        limit = 250  # Maximum products per page
+        since_id = None
         
-        while has_next_page:
-            query = """
-            query getProducts($cursor: String) {
-                products(first: 250, after: $cursor) {
-                    pageInfo {
-                        hasNextPage
-                        endCursor
-                    }
-                    edges {
-                        node {
-                            id
-                            title
-                            variants(first: 100) {
-                                edges {
-                                    node {
-                                        id
-                                        sku
-                                        price
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+        while True:
+            # Use REST API instead of GraphQL
+            rest_url = f"https://{self.store}/admin/api/{self.api_version}/products.json"
+            params = {
+                'limit': limit
             }
-            """
-            
-            variables = {"cursor": cursor} if cursor else {}
+            if since_id:
+                params['since_id'] = since_id
             
             try:
-                response = self.session.post(
-                    self.base_url,
-                    json={'query': query, 'variables': variables},
+                response = self.session.get(
+                    rest_url,
+                    params=params,
                     timeout=30
                 )
                 response.raise_for_status()
                 
                 data = response.json()
+                products = data.get('products', [])
                 
-                if 'errors' in data:
-                    logger.error(f"GraphQL errors: {data['errors']}")
-                    break
+                if not products:
+                    break  # No more products
                 
-                products_data = data.get('data', {}).get('products', {})
-                edges = products_data.get('edges', [])
-                
-                for edge in edges:
-                    product = edge['node']
-                    product_id = product['id']
-                    product_title = product['title']
+                for product in products:
+                    product_id = product.get('id')
+                    product_title = product.get('title', '')
                     
                     # Process variants
-                    variants = product.get('variants', {}).get('edges', [])
-                    for variant_edge in variants:
-                        variant = variant_edge['node']
+                    variants = product.get('variants', [])
+                    for variant in variants:
                         sku = variant.get('sku')
                         if sku:  # Only process variants with SKUs
                             all_products.append({
-                                'product_id': product_id,
+                                'product_id': f"gid://shopify/Product/{product_id}",
                                 'product_title': product_title,
-                                'variant_id': variant['id'],
+                                'variant_id': f"gid://shopify/ProductVariant/{variant.get('id')}",
                                 'sku': sku,
                                 'price': float(variant.get('price', 0))
                             })
                 
-                # Check pagination
-                page_info = products_data.get('pageInfo', {})
-                has_next_page = page_info.get('hasNextPage', False)
-                cursor = page_info.get('endCursor')
+                logger.info(f"Fetched {len(products)} products")
                 
-                logger.info(f"Fetched {len(edges)} products, has_next_page: {has_next_page}")
+                # Check if we got fewer products than the limit (last page)
+                if len(products) < limit:
+                    break
+                
+                # Set since_id to the last product's ID for next iteration
+                if products:
+                    since_id = products[-1].get('id')
+                else:
+                    break
                 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Request failed for Shopify API: {e}")
@@ -227,20 +210,25 @@ class ShopifyClient:
                 raise ValueError("Product SKU is required")
             
             # Check if product already exists
-            existing_product = ShopifyProduct.query.filter_by(sku=sku).first()
+            conn = db.connect()
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM shopify_products WHERE sku = ?', (sku,))
+            existing_row = cursor.fetchone()
             
-            if existing_product:
+            if existing_row:
                 # Update existing product
+                existing_product = ShopifyProduct(**dict(existing_row))
                 self._update_product_from_data(existing_product, product_data)
+                existing_product.save(db)
             else:
                 # Create new product
                 new_product = self._create_product_from_data(product_data)
-                db.session.add(new_product)
+                new_product.save(db)
             
-            db.session.commit()
+            conn.close()
             
         except Exception as e:
-            db.session.rollback()
+            conn.close()
             raise e
     
     def _create_product_from_data(self, data: Dict[str, Any]) -> ShopifyProduct:
@@ -263,7 +251,12 @@ class ShopifyClient:
     def get_products_count(self) -> int:
         """Get count of products in database"""
         try:
-            return ShopifyProduct.query.count()
+            conn = db.connect()
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM shopify_products')
+            count = cursor.fetchone()[0]
+            conn.close()
+            return count
         except Exception as e:
             logger.error(f"Error getting Shopify products count: {e}")
             return 0

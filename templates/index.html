@@ -1,303 +1,324 @@
-{% extends "base.html" %}
-
-{% block title %}Dashboard - Product Adder{% endblock %}
-
-{% block content %}
-<div class="row">
-    <div class="col-12">
-        <h1 class="mb-4">Product Adder Dashboard</h1>
-        <p class="lead">Monitor JDS Wholesale catalog and manage Shopify product additions</p>
-    </div>
-</div>
-
-<!-- Status Cards -->
-<div class="row mb-4">
-    <div class="col-md-4">
-        <div class="card text-center">
-            <div class="card-body">
-                <h5 class="card-title">JDS Products</h5>
-                <h2 class="text-primary" id="jds-count">{{ stats.get('jds_products_count', 0) }}</h2>
-                <p class="card-text">Products in JDS catalog</p>
-                <button class="btn btn-outline-primary btn-sm" id="sync-jds-btn-card">
-                    <span class="spinner-border spinner-border-sm d-none" id="jds-spinner"></span>
-                    Sync JDS
-                </button>
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-md-4">
-        <div class="card text-center">
-            <div class="card-body">
-                <h5 class="card-title">Shopify Products</h5>
-                <h2 class="text-success" id="shopify-count">{{ stats.get('shopify_products_count', 0) }}</h2>
-                <p class="card-text">Products in Shopify store</p>
-                <button class="btn btn-outline-success btn-sm" id="sync-shopify-btn-card">
-                    <span class="spinner-border spinner-border-sm d-none" id="shopify-spinner"></span>
-                    Sync Shopify
-                </button>
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-md-4">
-        <div class="card text-center">
-            <div class="card-body">
-                <h5 class="card-title">Unmatched Products</h5>
-                <h2 class="text-warning" id="unmatched-count">{{ stats.get('unmatched_count', 0) }}</h2>
-                <p class="card-text">New products to add</p>
-                <button class="btn btn-outline-warning btn-sm" id="view-unmatched-btn" disabled>
-                    View Products
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Quick Actions -->
-<div class="row mb-4">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Quick Actions</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <h6>Data Synchronization</h6>
-                        <p class="text-muted">Sync product data from external APIs</p>
-                        <div class="btn-group" role="group">
-                            <button class="btn btn-primary" id="sync-all-btn">
-                                <span class="spinner-border spinner-border-sm d-none" id="sync-all-spinner"></span>
-                                Sync All Data
-                            </button>
-                            <button class="btn btn-outline-secondary" id="check-status-btn">
-                                Check Status
-                            </button>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <h6>Product Management</h6>
-                        <p class="text-muted">Manage unmatched products (Coming in Phase 2)</p>
-                        <button class="btn btn-outline-secondary" disabled>
-                            View Unmatched Products
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- System Status -->
-<div class="row">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">System Status</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-3">
-                        <div class="d-flex align-items-center">
-                            <div class="badge bg-secondary me-2" id="jds-status">Unknown</div>
-                            <span>JDS API</span>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="d-flex align-items-center">
-                            <div class="badge bg-secondary me-2" id="shopify-status">Unknown</div>
-                            <span>Shopify API</span>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="d-flex align-items-center">
-                            <div class="badge bg-secondary me-2" id="database-status">Unknown</div>
-                            <span>Database</span>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="d-flex align-items-center">
-                            <div class="badge bg-secondary me-2" id="overall-status">Unknown</div>
-                            <span>Overall</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Error Display -->
-{% if error %}
-<div class="row mt-4">
-    <div class="col-12">
-        <div class="alert alert-danger" role="alert">
-            <h6 class="alert-heading">Error</h6>
-            <p class="mb-0">{{ error }}</p>
-        </div>
-    </div>
-</div>
-{% endif %}
-{% endblock %}
-
-{% block extra_scripts %}
-<script>
-// Initialize dashboard when page loads
-document.addEventListener('DOMContentLoaded', function() {
-    checkSystemStatus();
-    
-    // Set up event listeners
-    document.getElementById('sync-jds-btn').addEventListener('click', syncJDS);
-    document.getElementById('sync-shopify-btn').addEventListener('click', syncShopify);
-    document.getElementById('sync-jds-btn-card').addEventListener('click', syncJDS);
-    document.getElementById('sync-shopify-btn-card').addEventListener('click', syncShopify);
-    document.getElementById('sync-all-btn').addEventListener('click', syncAll);
-    document.getElementById('check-status-btn').addEventListener('click', checkSystemStatus);
-});
-
-function checkSystemStatus() {
-    fetch('/api/status')
-        .then(response => response.json())
-        .then(data => {
-            updateStatusBadge('jds-status', data.jds_connected);
-            updateStatusBadge('shopify-status', data.shopify_connected);
-            updateStatusBadge('database-status', data.database_connected);
-            updateStatusBadge('overall-status', data.status === 'healthy');
-            updateConnectionStatus(data.status === 'healthy');
-        })
-        .catch(error => {
-            console.error('Error checking status:', error);
-            updateStatusBadge('overall-status', false);
-            updateConnectionStatus(false);
-        });
-}
-
-function updateStatusBadge(elementId, isConnected) {
-    const badge = document.getElementById(elementId);
-    if (isConnected) {
-        badge.className = 'badge bg-success me-2';
-        badge.textContent = 'Connected';
-    } else {
-        badge.className = 'badge bg-danger me-2';
-        badge.textContent = 'Disconnected';
-    }
-}
-
-function updateConnectionStatus(isHealthy) {
-    const statusElement = document.getElementById('connection-status');
-    if (isHealthy) {
-        statusElement.className = 'badge bg-success';
-        statusElement.textContent = 'Online';
-    } else {
-        statusElement.className = 'badge bg-danger';
-        statusElement.textContent = 'Offline';
-    }
-}
-
-function syncJDS() {
-    const spinner = document.getElementById('jds-spinner');
-    const button = document.getElementById('sync-jds-btn-card');
-    
-    spinner.classList.remove('d-none');
-    button.disabled = true;
-    
-    fetch('/api/sync/jds')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('jds-count').textContent = data.data.count;
-                showAlert('success', data.message);
-            } else {
-                showAlert('danger', data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Error syncing JDS:', error);
-            showAlert('danger', 'Error syncing JDS products');
-        })
-        .finally(() => {
-            spinner.classList.add('d-none');
-            button.disabled = false;
-        });
-}
-
-function syncShopify() {
-    const spinner = document.getElementById('shopify-spinner');
-    const button = document.getElementById('sync-shopify-btn-card');
-    
-    spinner.classList.remove('d-none');
-    button.disabled = true;
-    
-    fetch('/api/sync/shopify')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('shopify-count').textContent = data.data.count;
-                showAlert('success', data.message);
-            } else {
-                showAlert('danger', data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Error syncing Shopify:', error);
-            showAlert('danger', 'Error syncing Shopify products');
-        })
-        .finally(() => {
-            spinner.classList.add('d-none');
-            button.disabled = false;
-        });
-}
-
-function syncAll() {
-    const spinner = document.getElementById('sync-all-spinner');
-    const button = document.getElementById('sync-all-btn');
-    
-    spinner.classList.remove('d-none');
-    button.disabled = true;
-    
-    Promise.all([
-        fetch('/api/sync/jds').then(response => response.json()),
-        fetch('/api/sync/shopify').then(response => response.json())
-    ])
-    .then(([jdsResult, shopifyResult]) => {
-        if (jdsResult.success) {
-            document.getElementById('jds-count').textContent = jdsResult.data.count;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Adder - Phase 2 Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f8f9fa;
+            color: #333;
         }
-        if (shopifyResult.success) {
-            document.getElementById('shopify-count').textContent = shopifyResult.data.count;
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
         }
-        
-        const allSuccess = jdsResult.success && shopifyResult.success;
-        showAlert(allSuccess ? 'success' : 'warning', 
-                 allSuccess ? 'All data synced successfully' : 'Some sync operations failed');
-    })
-    .catch(error => {
-        console.error('Error syncing all data:', error);
-        showAlert('danger', 'Error syncing data');
-    })
-    .finally(() => {
-        spinner.classList.add('d-none');
-        button.disabled = false;
-    });
-}
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+            font-size: 2.5em;
+        }
+        .header .subtitle {
+            color: #7f8c8d;
+            font-size: 1.2em;
+            margin: 0;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .stat-card h3 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+            font-size: 1.1em;
+        }
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .stat-number.jds { color: #3498db; }
+        .stat-number.shopify { color: #9b59b6; }
+        .stat-number.matched { color: #27ae60; }
+        .stat-number.unmatched { color: #e74c3c; }
+        .stat-label {
+            color: #7f8c8d;
+            font-size: 0.9em;
+        }
+        .actions {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .actions h2 {
+            margin: 0 0 20px 0;
+            color: #2c3e50;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            margin: 5px;
+            background: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background 0.3s;
+        }
+        .btn:hover {
+            background: #2980b9;
+        }
+        .btn.success { background: #27ae60; }
+        .btn.success:hover { background: #229954; }
+        .btn.warning { background: #f39c12; }
+        .btn.warning:hover { background: #e67e22; }
+        .btn.danger { background: #e74c3c; }
+        .btn.danger:hover { background: #c0392b; }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-indicator.connected { background: #27ae60; }
+        .status-indicator.disconnected { background: #e74c3c; }
+        .status-indicator.unknown { background: #f39c12; }
+        .api-status {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .api-status h3 {
+            margin: 0 0 15px 0;
+            color: #2c3e50;
+        }
+        .api-item {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #7f8c8d;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success-msg {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎉 Product Adder - Phase 2 Complete!</h1>
+            <p class="subtitle">Shopify Catalog Monitor with Pricing Calculator</p>
+        </div>
 
-function showAlert(type, message) {
-    const alertContainer = document.querySelector('.container');
-    const alertDiv = document.createElement('div');
-    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-    alertDiv.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    `;
-    alertContainer.insertBefore(alertDiv, alertContainer.firstChild);
-    
-    // Auto-dismiss after 5 seconds
-    setTimeout(() => {
-        if (alertDiv.parentNode) {
-            alertDiv.remove();
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>JDS Products</h3>
+                <div class="stat-number jds">{{ comparison_stats.jds_total or 0 }}</div>
+                <div class="stat-label">Total Products</div>
+            </div>
+            <div class="stat-card">
+                <h3>Shopify Products</h3>
+                <div class="stat-number shopify">{{ comparison_stats.shopify_total or 0 }}</div>
+                <div class="stat-label">Total Products</div>
+            </div>
+            <div class="stat-card">
+                <h3>Matched Products</h3>
+                <div class="stat-number matched">{{ comparison_stats.matched or 0 }}</div>
+                <div class="stat-label">{{ "%.1f"|format(comparison_stats.match_percentage or 0) }}% Match Rate</div>
+            </div>
+            <div class="stat-card">
+                <h3>Unmatched Products</h3>
+                <div class="stat-number unmatched">{{ comparison_stats.unmatched or 0 }}</div>
+                <div class="stat-label">Ready to Add</div>
+            </div>
+        </div>
+
+        <div class="api-status">
+            <h3>API Connection Status</h3>
+            <div class="api-item">
+                <span class="status-indicator {{ 'connected' if sync_status.jds_api_connected else 'disconnected' }}"></span>
+                <strong>JDS API:</strong> {{ 'Connected' if sync_status.jds_api_connected else 'Disconnected' }}
+            </div>
+            <div class="api-item">
+                <span class="status-indicator {{ 'connected' if sync_status.shopify_api_connected else 'disconnected' }}"></span>
+                <strong>Shopify API:</strong> {{ 'Connected' if sync_status.shopify_api_connected else 'Disconnected' }}
+            </div>
+            {% if sync_status.last_sync %}
+            <div class="api-item">
+                <strong>Last Sync:</strong> {{ sync_status.last_sync }}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="actions">
+            <h2>Actions</h2>
+            <button class="btn success" onclick="syncAllData()">🔄 Sync All Data</button>
+            <button class="btn" onclick="viewUnmatched()">📋 View Unmatched Products</button>
+            <button class="btn" onclick="viewMatched()">✅ View Matched Products</button>
+            <button class="btn" onclick="viewMatchedWithPricing()">💰 View Matched Products with Pricing</button>
+            <button class="btn warning" onclick="testConnections()">🔧 Test API Connections</button>
+            <button class="btn" onclick="refreshStats()">📊 Refresh Statistics</button>
+        </div>
+
+        <div id="message-area"></div>
+    </div>
+
+    <script>
+        function showMessage(message, type = 'info') {
+            const messageArea = document.getElementById('message-area');
+            const className = type === 'error' ? 'error' : 'success-msg';
+            messageArea.innerHTML = `<div class="${className}">${message}</div>`;
+            setTimeout(() => {
+                messageArea.innerHTML = '';
+            }, 5000);
         }
-    }, 5000);
-}
-</script>
-{% endblock %}
+
+        function syncAllData() {
+            showMessage('Starting data sync...', 'info');
+            fetch('/api/sync/all', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ force: true })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`Sync completed: ${data.message}`, 'success');
+                    refreshStats();
+                } else {
+                    showMessage(`Sync failed: ${data.message}`, 'error');
+                }
+            })
+            .catch(error => {
+                showMessage(`Sync error: ${error.message}`, 'error');
+            });
+        }
+
+        function viewUnmatched() {
+            fetch('/api/products/unmatched')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`Found ${data.count} unmatched products. Check console for details.`, 'success');
+                    console.log('Unmatched products:', data.products);
+                } else {
+                    showMessage('Error loading unmatched products', 'error');
+                }
+            })
+            .catch(error => {
+                showMessage(`Error: ${error.message}`, 'error');
+            });
+        }
+
+        function viewMatched() {
+            fetch('/api/products/matched')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`Found ${data.count} matched products. Check console for details.`, 'success');
+                    console.log('Matched products:', data.products);
+                } else {
+                    showMessage('Error loading matched products', 'error');
+                }
+            })
+            .catch(error => {
+                showMessage(`Error: ${error.message}`, 'error');
+            });
+        }
+
+        function viewMatchedWithPricing() {
+            fetch('/api/products/matched-with-pricing')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`Found ${data.count} matched products with pricing analysis. Check console for details.`, 'success');
+                    console.log('Matched products with pricing:', data.products);
+                    
+                    // Display pricing summary
+                    let summary = 'Pricing Analysis Summary:\n';
+                    data.products.forEach(product => {
+                        const current = product.current_shopify_price || 0;
+                        const calculated = product.calculated_shopify_price || 0;
+                        const diff = product.price_difference || 0;
+                        const diffPercent = product.price_difference_percent || 0;
+                        
+                        summary += `${product.sku}: Current $${current.toFixed(2)} → Should be $${calculated.toFixed(2)} (${diff > 0 ? '+' : ''}${diff.toFixed(2)}, ${diffPercent.toFixed(1)}%)\n`;
+                    });
+                    console.log(summary);
+                } else {
+                    showMessage('Error loading matched products with pricing', 'error');
+                }
+            })
+            .catch(error => {
+                showMessage(`Error: ${error.message}`, 'error');
+            });
+        }
+
+        function testConnections() {
+            fetch('/api/test/connections')
+            .then(response => response.json())
+            .then(data => {
+                const jdsStatus = data.jds_api.connected ? 'Connected' : 'Disconnected';
+                const shopifyStatus = data.shopify_api.connected ? 'Connected' : 'Disconnected';
+                showMessage(`JDS API: ${jdsStatus}, Shopify API: ${shopifyStatus}`, 'info');
+            })
+            .catch(error => {
+                showMessage(`Connection test error: ${error.message}`, 'error');
+            });
+        }
+
+        function refreshStats() {
+            location.reload();
+        }
+
+        // Auto-refresh stats every 30 seconds
+        setInterval(refreshStats, 30000);
+    </script>
+</body>
+</html>
