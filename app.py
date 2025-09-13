@@ -68,6 +68,11 @@ def require_api_key(fn):
         return fn(*args, **kwargs)
     return api_key_wrapper
 
+@app.route('/favicon.ico')
+def favicon():
+    """Serve favicon"""
+    return app.send_static_file('images/placeholder.svg')
+
 @app.route('/')
 def index():
     """Main dashboard showing sync status and statistics"""
@@ -647,7 +652,6 @@ def calculate_pricing():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/test/connections')
-@require_api_key
 def test_connections():
     """Test API connections"""
     try:
