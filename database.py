@@ -462,30 +462,24 @@ def get_unmatched_products_optimized(offset: int = 0, limit: int = 100) -> Tuple
         conn = db.connect()
         cursor = conn.cursor()
         
-        # Get total count first
-        cursor.execute('SELECT COUNT(*) FROM jds_products')
-        total_count = cursor.fetchone()[0]
-        
         # Get Shopify SKUs for comparison (cached)
         shopify_skus = get_shopify_skus_cached()
         
-        # Get JDS products with pagination
-        cursor.execute('''
-            SELECT * FROM jds_products 
-            ORDER BY last_updated DESC 
-            LIMIT ? OFFSET ?
-        ''', (limit, offset))
+        # First, get all unmatched products to determine total count
+        cursor.execute('SELECT * FROM jds_products')
+        all_jds_rows = cursor.fetchall()
         
-        jds_rows = cursor.fetchall()
-        unmatched_products = []
+        unmatched_rows = []
+        for row in all_jds_rows:
+            cleaned_sku = clean_sku_for_comparison(row['sku'])
+            if cleaned_sku not in shopify_skus:
+                unmatched_rows.append(row)
         
-        for row in jds_rows:
-            jds_product = JDSProduct(**dict(row))
-            cleaned_jds_sku = clean_sku_for_comparison(jds_product.sku)
-            
-            # Check if this JDS product exists in Shopify (using cleaned SKUs)
-            if cleaned_jds_sku not in shopify_skus:
-                unmatched_products.append(jds_product)
+        total_count = len(unmatched_rows)
+        
+        # Apply pagination
+        paginated_rows = unmatched_rows[offset:offset + limit]
+        unmatched_products = [JDSProduct(**dict(row)) for row in paginated_rows]
         
         conn.close()
         
@@ -517,30 +511,24 @@ def get_matched_products_optimized(offset: int = 0, limit: int = 100) -> Tuple[L
         conn = db.connect()
         cursor = conn.cursor()
         
-        # Get total count first
-        cursor.execute('SELECT COUNT(*) FROM jds_products')
-        total_count = cursor.fetchone()[0]
-        
         # Get Shopify SKUs for comparison (cached)
         shopify_skus = get_shopify_skus_cached()
         
-        # Get JDS products with pagination
-        cursor.execute('''
-            SELECT * FROM jds_products 
-            ORDER BY last_updated DESC 
-            LIMIT ? OFFSET ?
-        ''', (limit, offset))
+        # First, get all JDS products to determine matched count
+        cursor.execute('SELECT * FROM jds_products')
+        all_jds_rows = cursor.fetchall()
         
-        jds_rows = cursor.fetchall()
-        matched_products = []
+        matched_rows = []
+        for row in all_jds_rows:
+            cleaned_sku = clean_sku_for_comparison(row['sku'])
+            if cleaned_sku in shopify_skus:
+                matched_rows.append(row)
         
-        for row in jds_rows:
-            jds_product = JDSProduct(**dict(row))
-            cleaned_jds_sku = clean_sku_for_comparison(jds_product.sku)
-            
-            # Check if this JDS product exists in Shopify (using cleaned SKUs)
-            if cleaned_jds_sku in shopify_skus:
-                matched_products.append(jds_product)
+        total_count = len(matched_rows)
+        
+        # Apply pagination
+        paginated_rows = matched_rows[offset:offset + limit]
+        matched_products = [JDSProduct(**dict(row)) for row in paginated_rows]
         
         conn.close()
         

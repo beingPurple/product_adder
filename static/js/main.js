@@ -7,6 +7,12 @@
 let isLoading = false;
 
 // Utility functions
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 function showLoading(elementId) {
     const element = document.getElementById(elementId);
     if (element) {
@@ -25,11 +31,19 @@ function hideLoading(elementId) {
 
 function showAlert(type, message, duration = 5000) {
     const alertContainer = document.querySelector('.container');
+    if (!alertContainer) {
+        console.error('Alert container not found');
+        return;
+    }
     const alertDiv = document.createElement('div');
-    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    const allowedTypes = new Set(['success','danger','warning','info','primary','secondary','light','dark']);
+    const safeType = allowedTypes.has(type) ? type : 'info';
+    alertDiv.className = `alert alert-${safeType} alert-dismissible fade show`;
+    alertDiv.setAttribute('role', 'alert');
+    alertDiv.setAttribute('aria-live', safeType === 'success' ? 'polite' : 'assertive');
     alertDiv.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        ${escapeHtml(message)}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     `;
     alertContainer.insertBefore(alertDiv, alertContainer.firstChild);
     
@@ -393,12 +407,6 @@ function showDetailedResults(type, title, data) {
     }, duration);
 }
 
-// Utility function for escaping HTML
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 
 // Utility function for debouncing
 function debounce(func, wait) {

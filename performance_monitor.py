@@ -6,6 +6,7 @@ Tracks performance metrics and provides monitoring endpoints
 import time
 import threading
 import logging
+from functools import wraps
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
@@ -208,6 +209,9 @@ class PerformanceMonitor:
                 health_scores['response_time'] = max(0, 100 - (avg_duration * 10))
             else:
                 health_scores['response_time'] = 100
+
+            # Overall health (average of all scores)
+            overall_health = sum(health_scores.values()) / len(health_scores) if health_scores else 100
             
             # Overall health (average of all scores)
             overall_health = sum(health_scores.values()) / len(health_scores)
@@ -283,7 +287,8 @@ def time_function(metric_name: str, tags: Optional[Dict[str, str]] = None):
 def time_api_call(endpoint: str, method: str = "GET"):
     """Decorator to time API calls"""
     def decorator(func):
-        def wrapper(*args, **kwargs):
+        @wraps(func)
+        def timing_wrapper(*args, **kwargs):
             start_time = time.time()
             status_code = 200
             error = None
@@ -299,5 +304,5 @@ def time_api_call(endpoint: str, method: str = "GET"):
                 duration = time.time() - start_time
                 record_api_call(endpoint, method, duration, status_code, error)
         
-        return wrapper
+        return timing_wrapper
     return decorator

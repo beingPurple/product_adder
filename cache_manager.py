@@ -174,9 +174,14 @@ def cache_key_for_product_details(sku: str) -> str:
     return f"product:{sku}"
 
 # Cache decorator
-def cached(ttl: int = 300, key_func: Optional[callable] = None):
+from functools import wraps
+from typing import Any, Optional, Dict, List, Callable
+
+# Cache decorator
+def cached(ttl: int = 300, key_func: Optional[Callable] = None):
     """Decorator to cache function results"""
     def decorator(func):
+        @wraps(func)
         def wrapper(*args, **kwargs):
             # Generate cache key
             if key_func:

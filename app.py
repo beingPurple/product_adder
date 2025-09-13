@@ -47,13 +47,13 @@ app.config['API_KEY'] = os.environ.get('APP_API_KEY')  # set in env; no default 
 from functools import wraps
 def require_api_key(fn):
     @wraps(fn)
-    def wrapper(*args, **kwargs):
+    def api_key_wrapper(*args, **kwargs):
         api_key = app.config.get('API_KEY')
         provided = request.headers.get('X-API-Key')
         if not api_key or provided != api_key:
             return jsonify({'error': 'Unauthorized'}), 401
         return fn(*args, **kwargs)
-    return wrapper
+    return api_key_wrapper
 
 # Fail fast if API_KEY is missing in production
 if os.environ.get('FLASK_ENV') == 'production' and not app.config.get('API_KEY'):
@@ -581,6 +581,7 @@ def comparison_stats():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/pricing/calculate', methods=['POST'])
+@require_api_key
 def calculate_pricing():
     """Calculate Shopify pricing for given JDS product data"""
     try:
@@ -607,6 +608,7 @@ def calculate_pricing():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/test/connections')
+@require_api_key
 def test_connections():
     """Test API connections"""
     try:
@@ -962,6 +964,7 @@ def rollback_products():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/debug/unmatched')
+@require_api_key
 def debug_unmatched():
     """Debug endpoint to test unmatched products directly"""
     try:

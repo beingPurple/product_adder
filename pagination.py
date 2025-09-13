@@ -36,6 +36,8 @@ class Paginator:
         self.total = len(data)
         self.page = max(1, page)
         self.per_page = min(per_page, max_per_page)
+        # Ensure per_page is at least 1 to avoid division by zero
+        self.per_page = max(1, self.per_page)
         self.total_pages = math.ceil(self.total / self.per_page) if self.total > 0 else 1
         
         # Ensure page is within bounds
@@ -151,6 +153,7 @@ def create_pagination_links(base_url: str, page: int, total_pages: int,
         Dictionary with pagination links
     """
     def build_url(page_num: Optional[int]) -> Optional[str]:
+        from urllib.parse import urlencode
         if page_num is None:
             return None
         
@@ -160,7 +163,7 @@ def create_pagination_links(base_url: str, page: int, total_pages: int,
             **params
         }
         
-        param_string = '&'.join(f"{k}={v}" for k, v in query_params.items())
+        param_string = urlencode(query_params)
         return f"{base_url}?{param_string}"
     
     return {

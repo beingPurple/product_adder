@@ -219,26 +219,36 @@ class JDSClient:
         if not sku:
             raise ValueError("Product SKU is required")
         
+        conn = None
         try:
-            with db.connect() as conn:
-                with conn.cursor() as cursor:
-                    # Check if product already exists
-                    cursor.execute('SELECT * FROM jds_products WHERE sku = ?', (sku,))
-                    existing_row = cursor.fetchone()
-                    
-                    if existing_row:
-                        cols = [c[0] for c in cursor.description]
-                        row_dict = dict(zip(cols, existing_row))
-                        existing_product = JDSProduct(**row_dict)
-                        self._update_product_from_data(existing_product, product_data)
-                        existing_product.save(conn)
-                    else:
-                        new_product = self._create_product_from_data(product_data)
-                        new_product.save(conn)
-                conn.commit()
+            conn = db.connect()
+            cursor = conn.cursor()
+            
+            # Check if product already exists
+            cursor.execute('SELECT * FROM jds_products WHERE sku = ?', (sku,))
+            existing_row = cursor.fetchone()
+            
+            if existing_row:
+                cols = [c[0] for c in cursor.description]
+                row_dict = dict(zip(cols, existing_row))
+                existing_product = JDSProduct(**row_dict)
+                self._update_product_from_data(existing_product, product_data)
+                existing_product.save(conn)
+            else:
+                new_product = self._create_product_from_data(product_data)
+                new_product.save(conn)
+            
+            # Commit the transaction
+            conn.commit()
+            
         except Exception as e:
             logger.error(f"Error saving product {sku} to database: {e}")
+            if conn:
+                conn.rollback()
             raise e
+        finally:
+            if conn:
+                conn.close()
     
     def _create_product_from_data(self, data: Dict[str, Any]) -> JDSProduct:
         """Create a new JDSProduct from API data"""
