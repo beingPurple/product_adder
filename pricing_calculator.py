@@ -14,44 +14,53 @@ class PricingCalculator:
         self.regular_formula = "math.ceil(x * 2.5) - 0.01"
         self.under5_formula = "x * 3"
     
-    def calculate_price(self, formula: str, x: float, under5_formula: Optional[str] = None) -> float:
+    def calculate_price(self, formula: str, x, under5_formula: Optional[str] = None) -> float:
         """
         Calculate price using the exact same logic as edit_price system
         
         Args:
             formula: Main pricing formula (string)
-            x: Input value (JDS lessThanCasePrice)
+            x: Input value (JDS lessThanCasePrice) - can be string or numeric
             under5_formula: Optional formula for prices under $5
             
         Returns:
             Calculated price
         """
         try:
+            # Convert x to float, handling both string and numeric inputs
+            x_float = float(x) if x is not None else 0.0
+            
             # Use under5_formula if provided and x < 5
-            if under5_formula and float(x) < 5:
-                return eval(under5_formula, {"x": float(x), "math": math, "__builtins__": {}})
+            if under5_formula and x_float < 5:
+                return eval(under5_formula, {"x": x_float, "math": math, "__builtins__": {}})
             else:
-                return eval(formula, {"x": float(x), "math": math, "__builtins__": {}})
+                return eval(formula, {"x": x_float, "math": math, "__builtins__": {}})
         except Exception as e:
             print(f"Error calculating price: {e}")
             return 0.0
     
-    def calculate_shopify_price(self, jds_price: float) -> float:
+    def calculate_shopify_price(self, jds_price) -> float:
         """
         Calculate Shopify price from JDS lessThanCasePrice using standard formulas
         
         Args:
-            jds_price: JDS lessThanCasePrice value
+            jds_price: JDS lessThanCasePrice value (can be string or numeric)
             
         Returns:
             Calculated Shopify price
         """
-        if not jds_price or jds_price <= 0:
+        # Convert to float, handling both string and numeric inputs
+        try:
+            jds_price_float = float(jds_price) if jds_price is not None else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+        
+        if jds_price_float <= 0:
             return 0.0
         
         return self.calculate_price(
             formula=self.regular_formula,
-            x=jds_price,
+            x=jds_price_float,
             under5_formula=self.under5_formula
         )
     
@@ -68,42 +77,44 @@ class PricingCalculator:
         results = {}
         
         # Calculate for less_than_case_price (main price)
-        if jds_product.get('less_than_case_price'):
-            results['less_than_case'] = self.calculate_shopify_price(
-                jds_product['less_than_case_price']
-            )
+        price = jds_product.get('less_than_case_price')
+        if price and self._is_valid_price(price):
+            results['less_than_case'] = self.calculate_shopify_price(price)
         
         # Calculate for one_case
-        if jds_product.get('one_case'):
-            results['one_case'] = self.calculate_shopify_price(
-                jds_product['one_case']
-            )
+        price = jds_product.get('one_case')
+        if price and self._is_valid_price(price):
+            results['one_case'] = self.calculate_shopify_price(price)
         
         # Calculate for five_cases
-        if jds_product.get('five_cases'):
-            results['five_cases'] = self.calculate_shopify_price(
-                jds_product['five_cases']
-            )
+        price = jds_product.get('five_cases')
+        if price and self._is_valid_price(price):
+            results['five_cases'] = self.calculate_shopify_price(price)
         
         # Calculate for ten_cases
-        if jds_product.get('ten_cases'):
-            results['ten_cases'] = self.calculate_shopify_price(
-                jds_product['ten_cases']
-            )
+        price = jds_product.get('ten_cases')
+        if price and self._is_valid_price(price):
+            results['ten_cases'] = self.calculate_shopify_price(price)
         
         # Calculate for twenty_cases
-        if jds_product.get('twenty_cases'):
-            results['twenty_cases'] = self.calculate_shopify_price(
-                jds_product['twenty_cases']
-            )
+        price = jds_product.get('twenty_cases')
+        if price and self._is_valid_price(price):
+            results['twenty_cases'] = self.calculate_shopify_price(price)
         
         # Calculate for forty_cases
-        if jds_product.get('forty_cases'):
-            results['forty_cases'] = self.calculate_shopify_price(
-                jds_product['forty_cases']
-            )
+        price = jds_product.get('forty_cases')
+        if price and self._is_valid_price(price):
+            results['forty_cases'] = self.calculate_shopify_price(price)
         
         return results
+    
+    def _is_valid_price(self, price) -> bool:
+        """Check if a price value is valid and greater than 0"""
+        try:
+            price_float = float(price) if price is not None else 0.0
+            return price_float > 0
+        except (ValueError, TypeError):
+            return False
     
     def get_recommended_price(self, jds_product: Dict[str, Any]) -> float:
         """

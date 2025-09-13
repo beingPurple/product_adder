@@ -253,6 +253,89 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
+// Bulk operations for product management
+async function addSelectedProducts(skus) {
+    if (!skus || skus.length === 0) {
+        showAlert('warning', 'Please select products to add');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/products/bulk-add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ skus: skus })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showAlert('success', data.message);
+            return data;
+        } else {
+            showAlert('danger', data.error || 'Failed to add products');
+            return null;
+        }
+    } catch (error) {
+        console.error('Error adding products:', error);
+        showAlert('danger', 'Error adding products: ' + error.message);
+        return null;
+    }
+}
+
+async function updateSelectedPricing(skus) {
+    if (!skus || skus.length === 0) {
+        showAlert('warning', 'Please select products to update');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/products/bulk-update-pricing', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ skus: skus })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showAlert('success', data.message);
+            return data;
+        } else {
+            showAlert('danger', data.error || 'Failed to update pricing');
+            return null;
+        }
+    } catch (error) {
+        console.error('Error updating pricing:', error);
+        showAlert('danger', 'Error updating pricing: ' + error.message);
+        return null;
+    }
+}
+
+// Utility function for escaping HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Utility function for debouncing
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
 // Export functions for use in other scripts
 window.ProductAdder = {
     checkSystemStatus,
@@ -261,5 +344,9 @@ window.ProductAdder = {
     syncAll,
     showAlert,
     updateStatusBadge,
-    updateConnectionStatus
+    updateConnectionStatus,
+    addSelectedProducts,
+    updateSelectedPricing,
+    escapeHtml,
+    debounce
 };

@@ -1,0 +1,574 @@
+{% extends "base.html" %}
+
+{% block title %}Existing Products - Product Adder{% endblock %}
+
+{% block extra_head %}
+<style>
+    .product-card {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        background: white;
+        transition: all 0.3s ease;
+    }
+    
+    .product-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .product-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 15px;
+    }
+    
+    .product-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #333;
+        margin: 0;
+        flex: 1;
+    }
+    
+    .product-sku {
+        background: #e9ecef;
+        color: #495057;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+    
+    .product-image {
+        width: 120px;
+        height: 120px;
+        object-fit: cover;
+        border-radius: 8px;
+        margin-right: 20px;
+        border: 1px solid #e0e0e0;
+    }
+    
+    .product-content {
+        display: flex;
+        margin-bottom: 15px;
+    }
+    
+    .product-details {
+        flex: 1;
+    }
+    
+    .product-description {
+        color: #666;
+        margin-bottom: 10px;
+        line-height: 1.5;
+    }
+    
+    .pricing-comparison {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 6px;
+        margin-bottom: 15px;
+    }
+    
+    .pricing-title {
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 10px;
+    }
+    
+    .price-comparison-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 15px;
+    }
+    
+    .price-comparison-item {
+        text-align: center;
+        padding: 12px;
+        background: white;
+        border-radius: 6px;
+        border: 1px solid #e0e0e0;
+    }
+    
+    .price-comparison-item.current {
+        background: #e3f2fd;
+        border-color: #2196f3;
+    }
+    
+    .price-comparison-item.recommended {
+        background: #e8f5e8;
+        border-color: #4caf50;
+    }
+    
+    .price-label {
+        font-size: 0.75rem;
+        color: #666;
+        margin-bottom: 4px;
+        font-weight: 500;
+    }
+    
+    .price-value {
+        font-weight: 600;
+        color: #333;
+        font-size: 1.1rem;
+    }
+    
+    .price-difference {
+        font-size: 0.875rem;
+        margin-top: 4px;
+    }
+    
+    .price-difference.positive {
+        color: #28a745;
+    }
+    
+    .price-difference.negative {
+        color: #dc3545;
+    }
+    
+    .price-difference.neutral {
+        color: #6c757d;
+    }
+    
+    .status-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        text-transform: uppercase;
+    }
+    
+    .status-badge.accurate {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .status-badge.underpriced {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .status-badge.overpriced {
+        background: #f8d7da;
+        color: #721c24;
+    }
+    
+    .search-filters {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .filter-row {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        min-width: 200px;
+    }
+    
+    .filter-label {
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #333;
+        margin-bottom: 5px;
+    }
+    
+    .stats-bar {
+        background: #e9ecef;
+        padding: 10px 20px;
+        border-radius: 6px;
+        margin-bottom: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .no-products {
+        text-align: center;
+        padding: 60px 20px;
+        color: #666;
+    }
+    
+    .no-products h3 {
+        margin-bottom: 10px;
+        color: #333;
+    }
+    
+    @media (max-width: 768px) {
+        .product-content {
+            flex-direction: column;
+        }
+        
+        .product-image {
+            width: 100%;
+            height: 200px;
+            margin-right: 0;
+            margin-bottom: 15px;
+        }
+        
+        .filter-row {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        
+        .filter-group {
+            min-width: auto;
+        }
+        
+        .price-comparison-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h2 mb-1">✅ Products Already in Your Store</h1>
+                    <p class="text-muted mb-0">Review products that exist in both JDS and Shopify with pricing analysis</p>
+                </div>
+                <div>
+                    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+                        ← Back to Dashboard
+                    </a>
+                </div>
+            </div>
+            
+            <!-- Search and Filters -->
+            <div class="search-filters">
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label class="filter-label">Search Products</label>
+                        <input type="text" id="search-input" class="form-control" placeholder="Search by name, SKU, or description...">
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">Pricing Status</label>
+                        <select id="pricing-filter" class="form-select">
+                            <option value="">All Products</option>
+                            <option value="accurate">Accurate Pricing</option>
+                            <option value="underpriced">Underpriced</option>
+                            <option value="overpriced">Overpriced</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">Price Difference</label>
+                        <select id="difference-filter" class="form-select">
+                            <option value="">All Differences</option>
+                            <option value="0-5">0% - 5%</option>
+                            <option value="5-10">5% - 10%</option>
+                            <option value="10-20">10% - 20%</option>
+                            <option value="20+">Over 20%</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">Sort By</label>
+                        <select id="sort-filter" class="form-select">
+                            <option value="name">Product Name</option>
+                            <option value="difference">Price Difference</option>
+                            <option value="current_price">Current Price</option>
+                            <option value="sku">SKU</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Stats Bar -->
+            <div class="stats-bar">
+                <div>
+                    <span id="total-count">0</span> products in your store
+                </div>
+                <div>
+                    <span class="badge bg-success me-2" id="accurate-count">0</span> Accurate
+                    <span class="badge bg-warning me-2" id="underpriced-count">0</span> Underpriced
+                    <span class="badge bg-danger" id="overpriced-count">0</span> Overpriced
+                </div>
+            </div>
+            
+            <!-- Products Container -->
+            <div id="products-container">
+                <div class="text-center py-5">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-3">Loading products...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Global state
+let allProducts = [];
+let filteredProducts = [];
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    loadProducts();
+    setupEventListeners();
+});
+
+function setupEventListeners() {
+    // Search input
+    document.getElementById('search-input').addEventListener('input', debounce(filterProducts, 300));
+    
+    // Filters
+    document.getElementById('pricing-filter').addEventListener('change', filterProducts);
+    document.getElementById('difference-filter').addEventListener('change', filterProducts);
+    document.getElementById('sort-filter').addEventListener('change', filterProducts);
+}
+
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+async function loadProducts() {
+    try {
+        const response = await fetch('/api/products/matched-with-pricing');
+        const data = await response.json();
+        
+        if (data.success) {
+            allProducts = data.products;
+            filteredProducts = [...allProducts];
+            updateStats();
+            displayProducts();
+        } else {
+            showError('Failed to load products: ' + data.error);
+        }
+    } catch (error) {
+        showError('Error loading products: ' + error.message);
+    }
+}
+
+function filterProducts() {
+    const searchTerm = document.getElementById('search-input').value.toLowerCase();
+    const pricingFilter = document.getElementById('pricing-filter').value;
+    const differenceFilter = document.getElementById('difference-filter').value;
+    const sortBy = document.getElementById('sort-filter').value;
+    
+    filteredProducts = allProducts.filter(product => {
+        // Search filter
+        const matchesSearch = !searchTerm || 
+            product.name.toLowerCase().includes(searchTerm) ||
+            product.sku.toLowerCase().includes(searchTerm) ||
+            (product.description && product.description.toLowerCase().includes(searchTerm));
+        
+        // Pricing status filter
+        let matchesPricing = true;
+        if (pricingFilter) {
+            const diffPercent = Math.abs(product.price_difference_percent || 0);
+            switch (pricingFilter) {
+                case 'accurate':
+                    matchesPricing = diffPercent <= 5;
+                    break;
+                case 'underpriced':
+                    matchesPricing = (product.price_difference || 0) > 0 && diffPercent > 5;
+                    break;
+                case 'overpriced':
+                    matchesPricing = (product.price_difference || 0) < 0 && diffPercent > 5;
+                    break;
+            }
+        }
+        
+        // Price difference filter
+        let matchesDifference = true;
+        if (differenceFilter) {
+            const diffPercent = Math.abs(product.price_difference_percent || 0);
+            switch (differenceFilter) {
+                case '0-5':
+                    matchesDifference = diffPercent <= 5;
+                    break;
+                case '5-10':
+                    matchesDifference = diffPercent > 5 && diffPercent <= 10;
+                    break;
+                case '10-20':
+                    matchesDifference = diffPercent > 10 && diffPercent <= 20;
+                    break;
+                case '20+':
+                    matchesDifference = diffPercent > 20;
+                    break;
+            }
+        }
+        
+        return matchesSearch && matchesPricing && matchesDifference;
+    });
+    
+    // Sort products
+    filteredProducts.sort((a, b) => {
+        switch (sortBy) {
+            case 'name':
+                return a.name.localeCompare(b.name);
+            case 'difference':
+                return Math.abs(b.price_difference_percent || 0) - Math.abs(a.price_difference_percent || 0);
+            case 'current_price':
+                return (b.current_shopify_price || 0) - (a.current_shopify_price || 0);
+            case 'sku':
+                return a.sku.localeCompare(b.sku);
+            default:
+                return 0;
+        }
+    });
+    
+    updateStats();
+    displayProducts();
+}
+
+function displayProducts() {
+    const container = document.getElementById('products-container');
+    
+    if (filteredProducts.length === 0) {
+        container.innerHTML = `
+            <div class="no-products">
+                <h3>No products found</h3>
+                <p>Try adjusting your search or filter criteria.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = filteredProducts.map(product => createProductCard(product)).join('');
+}
+
+function createProductCard(product) {
+    const imageUrl = product.image_url || product.thumbnail_url || product.quick_image_url || '/static/images/placeholder.svg';
+    const currentPrice = product.current_shopify_price || 0;
+    const calculatedPrice = product.calculated_shopify_price || 0;
+    const priceDiff = product.price_difference || 0;
+    const priceDiffPercent = product.price_difference_percent || 0;
+    
+    // Determine pricing status
+    let pricingStatus = 'accurate';
+    let statusClass = 'accurate';
+    let statusText = 'Accurate';
+    
+    if (Math.abs(priceDiffPercent) > 5) {
+        if (priceDiff > 0) {
+            pricingStatus = 'underpriced';
+            statusClass = 'underpriced';
+            statusText = 'Underpriced';
+        } else {
+            pricingStatus = 'overpriced';
+            statusClass = 'overpriced';
+            statusText = 'Overpriced';
+        }
+    }
+    
+    return `
+        <div class="product-card">
+            <div class="product-header">
+                <h3 class="product-title">${escapeHtml(product.name || 'Unnamed Product')}</h3>
+                <div>
+                    <span class="product-sku">${escapeHtml(product.sku)}</span>
+                    <span class="status-badge ${statusClass} ms-2">${statusText}</span>
+                </div>
+            </div>
+            
+            <div class="product-content">
+                <img src="${imageUrl}" alt="${escapeHtml(product.name || 'Product')}" 
+                     class="product-image" onerror="this.src='/static/images/placeholder.svg'">
+                
+                <div class="product-details">
+                    <p class="product-description">${escapeHtml(product.description || 'No description available')}</p>
+                    
+                    <div class="pricing-comparison">
+                        <div class="pricing-title">Pricing Comparison</div>
+                        <div class="price-comparison-grid">
+                            <div class="price-comparison-item current">
+                                <div class="price-label">Current Shopify Price</div>
+                                <div class="price-value">$${currentPrice.toFixed(2)}</div>
+                            </div>
+                            <div class="price-comparison-item recommended">
+                                <div class="price-label">Recommended Price</div>
+                                <div class="price-value">$${calculatedPrice.toFixed(2)}</div>
+                            </div>
+                            <div class="price-comparison-item">
+                                <div class="price-label">Difference</div>
+                                <div class="price-value">$${Math.abs(priceDiff).toFixed(2)}</div>
+                                <div class="price-difference ${priceDiff > 0 ? 'positive' : priceDiff < 0 ? 'negative' : 'neutral'}">
+                                    ${priceDiff > 0 ? '+' : ''}${priceDiffPercent.toFixed(1)}%
+                                </div>
+                            </div>
+                            <div class="price-comparison-item">
+                                <div class="price-label">JDS Base Price</div>
+                                <div class="price-value">$${(product.less_than_case_price || 0).toFixed(2)}</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    ${product.pricing_warnings && product.pricing_warnings.length > 0 ? `
+                        <div class="alert alert-warning alert-sm">
+                            <strong>Pricing Note:</strong> ${product.pricing_warnings.join(', ')}
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function updateStats() {
+    document.getElementById('total-count').textContent = filteredProducts.length;
+    
+    // Count pricing statuses
+    let accurate = 0, underpriced = 0, overpriced = 0;
+    
+    filteredProducts.forEach(product => {
+        const diffPercent = Math.abs(product.price_difference_percent || 0);
+        const priceDiff = product.price_difference || 0;
+        
+        if (diffPercent <= 5) {
+            accurate++;
+        } else if (priceDiff > 0) {
+            underpriced++;
+        } else {
+            overpriced++;
+        }
+    });
+    
+    document.getElementById('accurate-count').textContent = accurate;
+    document.getElementById('underpriced-count').textContent = underpriced;
+    document.getElementById('overpriced-count').textContent = overpriced;
+}
+
+function showError(message) {
+    // Use the existing alert system from main.js
+    if (window.ProductAdder && window.ProductAdder.showAlert) {
+        window.ProductAdder.showAlert('danger', message);
+    } else {
+        alert(message);
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

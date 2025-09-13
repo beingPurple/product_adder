@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Product Adder - Phase 2 Dashboard</title>
+    <title>Product Adder - Shopify Catalog Manager</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -150,30 +150,30 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎉 Product Adder - Phase 2 Complete!</h1>
-            <p class="subtitle">Shopify Catalog Monitor with Pricing Calculator</p>
+            <h1>🛍️ Product Adder - Shopify Catalog Manager</h1>
+            <p class="subtitle">Discover new products from JDS Wholesale and add them to your Shopify store</p>
         </div>
 
         <div class="stats-grid">
             <div class="stat-card">
-                <h3>JDS Products</h3>
+                <h3>Available from JDS</h3>
                 <div class="stat-number jds">{{ comparison_stats.jds_total or 0 }}</div>
-                <div class="stat-label">Total Products</div>
+                <div class="stat-label">Products in JDS Catalog</div>
             </div>
             <div class="stat-card">
-                <h3>Shopify Products</h3>
+                <h3>In Your Store</h3>
                 <div class="stat-number shopify">{{ comparison_stats.shopify_total or 0 }}</div>
-                <div class="stat-label">Total Products</div>
+                <div class="stat-label">Products in Shopify</div>
             </div>
             <div class="stat-card">
-                <h3>Matched Products</h3>
+                <h3>Already Added</h3>
                 <div class="stat-number matched">{{ comparison_stats.matched or 0 }}</div>
-                <div class="stat-label">{{ "%.1f"|format(comparison_stats.match_percentage or 0) }}% Match Rate</div>
+                <div class="stat-label">{{ "%.1f"|format(comparison_stats.match_percentage or 0) }}% Coverage</div>
             </div>
             <div class="stat-card">
-                <h3>Unmatched Products</h3>
+                <h3>Ready to Add</h3>
                 <div class="stat-number unmatched">{{ comparison_stats.unmatched or 0 }}</div>
-                <div class="stat-label">Ready to Add</div>
+                <div class="stat-label">New Products Available</div>
             </div>
         </div>
 
@@ -195,12 +195,12 @@
         </div>
 
         <div class="actions">
-            <h2>Actions</h2>
-            <button class="btn success" onclick="syncAllData()">🔄 Sync All Data</button>
-            <button class="btn" onclick="viewUnmatched()">📋 View Unmatched Products</button>
-            <button class="btn" onclick="viewMatched()">✅ View Matched Products</button>
-            <button class="btn" onclick="viewMatchedWithPricing()">💰 View Matched Products with Pricing</button>
-            <button class="btn warning" onclick="testConnections()">🔧 Test API Connections</button>
+            <h2>Quick Actions</h2>
+            <button class="btn success" onclick="syncAllData()">🔄 Refresh Product Data</button>
+            <button class="btn" onclick="viewNewProducts()">🆕 Browse New Products</button>
+            <button class="btn" onclick="viewExistingProducts()">✅ View Existing Products</button>
+            <button class="btn" onclick="viewPricingAnalysis()">💰 Pricing Analysis</button>
+            <button class="btn warning" onclick="testConnections()">🔧 Test Connections</button>
             <button class="btn" onclick="refreshStats()">📊 Refresh Statistics</button>
         </div>
 
@@ -240,45 +240,23 @@
             });
         }
 
-        function viewUnmatched() {
-            fetch('/api/products/unmatched')
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    showMessage(`Found ${data.count} unmatched products. Check console for details.`, 'success');
-                    console.log('Unmatched products:', data.products);
-                } else {
-                    showMessage('Error loading unmatched products', 'error');
-                }
-            })
-            .catch(error => {
-                showMessage(`Error: ${error.message}`, 'error');
-            });
+        function viewNewProducts() {
+            // Redirect to new products page
+            window.location.href = '/products/new';
         }
 
-        function viewMatched() {
-            fetch('/api/products/matched')
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    showMessage(`Found ${data.count} matched products. Check console for details.`, 'success');
-                    console.log('Matched products:', data.products);
-                } else {
-                    showMessage('Error loading matched products', 'error');
-                }
-            })
-            .catch(error => {
-                showMessage(`Error: ${error.message}`, 'error');
-            });
+        function viewExistingProducts() {
+            // Redirect to existing products page
+            window.location.href = '/products/existing';
         }
 
-        function viewMatchedWithPricing() {
+        function viewPricingAnalysis() {
             fetch('/api/products/matched-with-pricing')
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showMessage(`Found ${data.count} matched products with pricing analysis. Check console for details.`, 'success');
-                    console.log('Matched products with pricing:', data.products);
+                    showMessage(`Found ${data.count} products for pricing analysis. Check console for details.`, 'success');
+                    console.log('Products with pricing analysis:', data.products);
                     
                     // Display pricing summary
                     let summary = 'Pricing Analysis Summary:\n';
@@ -292,7 +270,7 @@
                     });
                     console.log(summary);
                 } else {
-                    showMessage('Error loading matched products with pricing', 'error');
+                    showMessage('Error loading pricing analysis', 'error');
                 }
             })
             .catch(error => {

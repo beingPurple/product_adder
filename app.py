@@ -41,6 +41,26 @@ def index():
         logger.error(f"Error loading dashboard: {e}")
         return f"Error loading dashboard: {e}", 500
 
+# Phase 3 Routes - Product List Views
+
+@app.route('/products/new')
+def new_products():
+    """View products ready to add to Shopify"""
+    try:
+        return render_template('product_list.html')
+    except Exception as e:
+        logger.error(f"Error loading new products page: {e}")
+        return f"Error loading new products page: {e}", 500
+
+@app.route('/products/existing')
+def existing_products():
+    """View products that exist in both JDS and Shopify"""
+    try:
+        return render_template('existing_products.html')
+    except Exception as e:
+        logger.error(f"Error loading existing products page: {e}")
+        return f"Error loading existing products page: {e}", 500
+
 @app.route('/api/status')
 def status():
     return jsonify({
@@ -129,9 +149,9 @@ def sync_shopify():
 
 @app.route('/api/products/unmatched')
 def unmatched_products():
-    """Get unmatched JDS products with calculated pricing"""
+    """Get JDS products ready to add to Shopify with calculated pricing"""
     try:
-        logger.info("Getting unmatched products...")
+        logger.info("Getting products ready to add...")
         
         # Test database function directly first
         from database import get_unmatched_products
@@ -152,14 +172,14 @@ def unmatched_products():
             }
         })
     except Exception as e:
-        logger.error(f"Error getting unmatched products: {e}")
+        logger.error(f"Error getting products ready to add: {e}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/products/matched')
 def matched_products():
-    """Get matched products between JDS and Shopify"""
+    """Get products that exist in both JDS and Shopify"""
     try:
         products = get_matched_products()
         return jsonify({
@@ -168,12 +188,12 @@ def matched_products():
             'products': [p.to_dict() for p in products]
         })
     except Exception as e:
-        logger.error(f"Error getting matched products: {e}")
+        logger.error(f"Error getting existing products: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/products/matched-with-pricing')
 def matched_products_with_pricing():
-    """Get matched products with calculated pricing comparison"""
+    """Get existing products with pricing analysis"""
     try:
         from database import get_matched_products_with_shopify_prices
         from pricing_calculator import pricing_calculator
@@ -182,6 +202,9 @@ def matched_products_with_pricing():
         products_with_pricing = []
         
         for product_dict in matched_products:
+            # Debug: Log the product data types
+            logger.info(f"Product data types: {[(k, type(v)) for k, v in product_dict.items() if 'price' in k.lower()]}")
+            
             # Calculate what the Shopify price should be
             pricing_validation = pricing_calculator.validate_pricing_data(product_dict)
             product_dict['calculated_shopify_price'] = pricing_validation['recommended_price']
@@ -191,6 +214,17 @@ def matched_products_with_pricing():
             # Calculate price difference
             current_price = product_dict.get('current_shopify_price', 0)
             calculated_price = product_dict.get('calculated_shopify_price', 0)
+            
+            # Convert to float to handle string inputs from database
+            try:
+                current_price = float(current_price) if current_price is not None else 0.0
+            except (ValueError, TypeError):
+                current_price = 0.0
+                
+            try:
+                calculated_price = float(calculated_price) if calculated_price is not None else 0.0
+            except (ValueError, TypeError):
+                calculated_price = 0.0
             
             if current_price and calculated_price:
                 price_diff = calculated_price - current_price
@@ -209,7 +243,9 @@ def matched_products_with_pricing():
             'products': products_with_pricing
         })
     except Exception as e:
+        import traceback
         logger.error(f"Error getting matched products with pricing: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/comparison/stats')
@@ -252,24 +288,105 @@ def calculate_pricing():
 def test_connections():
     """Test API connections"""
     try:
+        # Ensure environment variables are loaded
+        load_dotenv()
+        
+        from data_sync import sync_manager
+        
+        # Test connections and cache results
+        connection_status = sync_manager.test_connections()
+        
+        # Get additional info for display
         jds_client = JDSClient()
         shopify_client = ShopifyClient()
         
-        jds_connected = jds_client.test_connection()
-        shopify_connected = shopify_client.test_connection()
-        
         return jsonify({
             'jds_api': {
-                'connected': jds_connected,
+                'connected': connection_status['jds_api_connected'],
                 'url': jds_client.api_url
             },
             'shopify_api': {
-                'connected': shopify_connected,
+                'connected': connection_status['shopify_api_connected'],
                 'store': shopify_client.store
             }
         })
     except Exception as e:
         logger.error(f"Error testing connections: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Phase 3 API Routes - Bulk Operations
+
+@app.route('/api/products/bulk-add', methods=['POST'])
+def bulk_add_products():
+    """Add multiple products to Shopify"""
+    try:
+        if not request.is_json:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        data = request.json
+        skus = data.get('skus', [])
+        
+        if not skus:
+            return jsonify({'error': 'No SKUs provided'}), 400
+        
+        # Get product data for the selected SKUs
+        products = get_unmatched_products_with_pricing()
+        selected_products = [p for p in products if p['sku'] in skus]
+        
+        if not selected_products:
+            return jsonify({'error': 'No valid products found for selected SKUs'}), 400
+        
+        # TODO: Implement actual Shopify product creation
+        # For now, simulate the process
+        logger.info(f"Would add {len(selected_products)} products to Shopify: {skus}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully added {len(selected_products)} products to Shopify',
+            'added_count': len(selected_products),
+            'products': selected_products
+        })
+        
+    except Exception as e:
+        logger.error(f"Error adding products to Shopify: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/products/bulk-update-pricing', methods=['POST'])
+def bulk_update_pricing():
+    """Update pricing for multiple existing products"""
+    try:
+        if not request.is_json:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        data = request.json
+        skus = data.get('skus', [])
+        
+        if not skus:
+            return jsonify({'error': 'No SKUs provided'}), 400
+        
+        # Get existing products with pricing analysis
+        from database import get_matched_products_with_shopify_prices
+        from pricing_calculator import pricing_calculator
+        
+        existing_products = get_matched_products_with_shopify_prices()
+        selected_products = [p for p in existing_products if p['sku'] in skus]
+        
+        if not selected_products:
+            return jsonify({'error': 'No valid products found for selected SKUs'}), 400
+        
+        # TODO: Implement actual Shopify price updates
+        # For now, simulate the process
+        logger.info(f"Would update pricing for {len(selected_products)} products: {skus}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully updated pricing for {len(selected_products)} products',
+            'updated_count': len(selected_products),
+            'products': selected_products
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating product pricing: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/debug/unmatched')

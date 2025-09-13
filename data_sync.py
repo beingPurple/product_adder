@@ -17,10 +17,17 @@ class DataSyncManager:
     """Manages data synchronization between APIs and local database"""
     
     def __init__(self):
+        # Ensure environment variables are loaded
+        from dotenv import load_dotenv
+        load_dotenv()
+        
         self.jds_client = JDSClient()
         self.shopify_client = ShopifyClient()
         self.last_sync = None
         self.sync_errors = []
+        self.jds_connected = None
+        self.shopify_connected = None
+        self.last_connection_test = None
     
     def sync_all_data(self, force: bool = False) -> Dict[str, Any]:
         """
@@ -330,10 +337,52 @@ class DataSyncManager:
                 'error': str(e)
             }
     
+    def test_connections(self) -> Dict[str, bool]:
+        """Test and cache connection status for both APIs"""
+        try:
+            # Test connections
+            jds_connected = self.jds_client.test_connection()
+            shopify_connected = self.shopify_client.test_connection()
+            
+            # Cache the results
+            self.jds_connected = jds_connected
+            self.shopify_connected = shopify_connected
+            self.last_connection_test = datetime.utcnow()
+            
+            return {
+                'jds_api_connected': jds_connected,
+                'shopify_api_connected': shopify_connected
+            }
+            
+        except Exception as e:
+            logger.error(f"Error testing connections: {e}")
+            return {
+                'jds_api_connected': False,
+                'shopify_api_connected': False
+            }
+    
+    def get_connection_status(self) -> Dict[str, bool]:
+        """Get cached connection status, test if not available or stale"""
+        from datetime import timedelta
+        
+        # Test connections if not cached or if cache is stale (older than 5 minutes)
+        if (self.jds_connected is None or 
+            self.shopify_connected is None or 
+            self.last_connection_test is None or
+            datetime.utcnow() - self.last_connection_test > timedelta(minutes=5)):
+            
+            return self.test_connections()
+        
+        return {
+            'jds_api_connected': self.jds_connected,
+            'shopify_api_connected': self.shopify_connected
+        }
+    
     def get_sync_status(self) -> Dict[str, Any]:
         """Get current sync status and statistics"""
         try:
             stats = get_sku_comparison_stats()
+            connection_status = self.get_connection_status()
             
             return {
                 'last_sync': self.last_sync.isoformat() if self.last_sync else None,
@@ -342,8 +391,8 @@ class DataSyncManager:
                 'matched_products': stats['matched'],
                 'unmatched_products': stats['unmatched'],
                 'match_percentage': stats['match_percentage'],
-                'jds_api_connected': self.jds_client.test_connection(),
-                'shopify_api_connected': self.shopify_client.test_connection()
+                'jds_api_connected': connection_status['jds_api_connected'],
+                'shopify_api_connected': connection_status['shopify_api_connected']
             }
             
         except Exception as e:
