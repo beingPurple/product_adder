@@ -69,7 +69,8 @@ def index():
         
         return render_template('index.html', 
                              sync_status=sync_status,
-                             comparison_stats=comparison_stats)
+                             comparison_stats=comparison_stats,
+                             api_key=app.config['API_KEY'])
     except Exception as e:
         logger.error(f"Error loading dashboard: {e}")
         return f"Error loading dashboard: {e}", 500

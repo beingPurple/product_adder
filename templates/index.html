@@ -199,14 +199,30 @@
             <button class="btn success" onclick="syncAllData()">🔄 Refresh Product Data</button>
             <button class="btn" onclick="viewNewProducts()">🆕 Browse New Products</button>
             <button class="btn" onclick="viewExistingProducts()">✅ View Existing Products</button>
-            <button class="btn" onclick="viewPricingAnalysis()">💰 Pricing Analysis</button>
             <button class="btn warning" onclick="testConnections()">🔧 Test Connections</button>
             <button class="btn" onclick="refreshStats()">📊 Refresh Statistics</button>
+        </div>
+
+        <div id="pricing-analysis-section" style="background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 30px; overflow: hidden;">
+            <div style="padding: 20px; background: #f8f9fa; border-bottom: 1px solid #dee2e6; cursor: pointer;" onclick="togglePricingAnalysis()">
+                <h3 style="margin: 0; color: #2c3e50; display: flex; align-items: center; justify-content: space-between;">
+                    <span>💰 Pricing Analysis <span id="pricing-arrow" style="font-size: 0.8em;">▼</span></span>
+                    <span id="pricing-loading" style="display: none; color: #7f8c8d; font-size: 0.9em;">Loading...</span>
+                </h3>
+            </div>
+            <div class="pricing-content" style="display: block; padding: 30px;">
+                <div id="pricing-results">
+                    <div style="text-align: center; padding: 40px; color: #7f8c8d;">
+                        <p>Click to load pricing analysis data</p>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div id="message-area"></div>
     </div>
 
+    <script>
         function showMessage(message, type = 'info') {
             const messageArea = document.getElementById('message-area');
             const className = type === 'error' ? 'error' : (type === 'info' ? 'info-msg' : 'success-msg');
@@ -232,7 +248,7 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-API-Key': '{{ app.config.API_KEY }}'
+                    'X-API-Key': '{{ api_key }}'
                 },
                 body: JSON.stringify({ force: true })
             })
@@ -280,32 +296,160 @@
             window.location.href = '/products/existing';
         }
 
-        function viewPricingAnalysis() {
+        function togglePricingAnalysis() {
+            const pricingSection = document.getElementById('pricing-analysis-section');
+            if (!pricingSection) return;
+            
+            const content = pricingSection.querySelector('.pricing-content');
+            const arrow = document.getElementById('pricing-arrow');
+            
+            const isVisible = content.style.display !== 'none';
+            content.style.display = isVisible ? 'none' : 'block';
+            
+            // Update arrow direction
+            if (arrow) {
+                arrow.textContent = isVisible ? '▶' : '▼';
+            }
+            
+            // Load data if expanding and not already loaded
+            if (!isVisible) {
+                const resultsElement = document.getElementById('pricing-results');
+                const hasData = resultsElement && resultsElement.innerHTML.trim() !== '' && 
+                               !resultsElement.innerHTML.includes('Click to load pricing analysis data');
+                
+                if (!hasData) {
+                    loadPricingAnalysisData();
+                }
+            }
+        }
+
+        function loadPricingAnalysisData() {
+            const loadingElement = document.getElementById('pricing-loading');
+            const resultsElement = document.getElementById('pricing-results');
+            
+            if (loadingElement) loadingElement.style.display = 'inline';
+            
             fetch('/api/products/matched-with-pricing')
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showMessage(`Found ${data.count} products for pricing analysis. Check console for details.`, 'success');
-                    console.log('Products with pricing analysis:', data.products);
-                    
-                    // Display pricing summary
-                    let summary = 'Pricing Analysis Summary:\n';
-                    data.products.forEach(product => {
-                        const current = parseFloat(product.current_shopify_price) || 0;
-                        const calculated = parseFloat(product.calculated_shopify_price) || 0;
-                        const diff = parseFloat(product.price_difference) || 0;
-                        const diffPercent = parseFloat(product.price_difference_percent) || 0;
-                        
-                        summary += `${product.sku}: Current $${current.toFixed(2)} → Should be $${calculated.toFixed(2)} (${diff > 0 ? '+' : ''}${diff.toFixed(2)}, ${diffPercent.toFixed(1)}%)\n`;
-                    });
-                    console.log(summary);
+                    displayPricingAnalysisResults(data);
                 } else {
-                    showMessage('Error loading pricing analysis', 'error');
+                    resultsElement.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #e74c3c;">
+                            <p>Error loading pricing analysis: ${data.message || 'Unknown error'}</p>
+                        </div>
+                    `;
                 }
             })
             .catch(error => {
-                showMessage(`Error: ${error.message}`, 'error');
+                resultsElement.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #e74c3c;">
+                        <p>Error loading pricing analysis: ${error.message}</p>
+                    </div>
+                `;
+            })
+            .finally(() => {
+                if (loadingElement) loadingElement.style.display = 'none';
             });
+        }
+
+        function displayPricingAnalysisResults(data) {
+            const resultsElement = document.getElementById('pricing-results');
+            
+            let content = `
+                <p style="margin-bottom: 20px; color: #7f8c8d;">
+                    <strong>Found ${data.count} products</strong> with pricing analysis data
+                </p>
+            `;
+            
+            if (data.products && data.products.length > 0) {
+                // Calculate summary statistics
+                const products = data.products;
+                const totalCurrentValue = products.reduce((sum, p) => sum + (parseFloat(p.current_shopify_price) || 0), 0);
+                const totalCalculatedValue = products.reduce((sum, p) => sum + (parseFloat(p.calculated_shopify_price) || 0), 0);
+                const totalDifference = totalCalculatedValue - totalCurrentValue;
+                const avgDifferencePercent = products.reduce((sum, p) => sum + (parseFloat(p.price_difference_percent) || 0), 0) / products.length;
+                
+                content += `
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px;">
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 1.5em; font-weight: bold; color: #2c3e50;">$${totalCurrentValue.toFixed(2)}</div>
+                            <div style="color: #7f8c8d; font-size: 0.9em;">Current Total Value</div>
+                        </div>
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 1.5em; font-weight: bold; color: #2c3e50;">$${totalCalculatedValue.toFixed(2)}</div>
+                            <div style="color: #7f8c8d; font-size: 0.9em;">Recommended Total Value</div>
+                        </div>
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 1.5em; font-weight: bold; color: ${totalDifference >= 0 ? '#27ae60' : '#e74c3c'};">
+                                ${totalDifference >= 0 ? '+' : ''}$${totalDifference.toFixed(2)}
+                            </div>
+                            <div style="color: #7f8c8d; font-size: 0.9em;">Total Difference</div>
+                        </div>
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 1.5em; font-weight: bold; color: ${avgDifferencePercent >= 0 ? '#27ae60' : '#e74c3c'};">
+                                ${avgDifferencePercent >= 0 ? '+' : ''}${avgDifferencePercent.toFixed(1)}%
+                            </div>
+                            <div style="color: #7f8c8d; font-size: 0.9em;">Avg Difference %</div>
+                        </div>
+                    </div>
+                `;
+                
+                // Create product table
+                content += `
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+                            <thead>
+                                <tr style="background: #f8f9fa;">
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">SKU</th>
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Product Name</th>
+                                    <th style="padding: 12px; text-align: right; border-bottom: 2px solid #dee2e6;">Current Price</th>
+                                    <th style="padding: 12px; text-align: right; border-bottom: 2px solid #dee2e6;">Recommended Price</th>
+                                    <th style="padding: 12px; text-align: right; border-bottom: 2px solid #dee2e6;">Difference</th>
+                                    <th style="padding: 12px; text-align: right; border-bottom: 2px solid #dee2e6;">Difference %</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                products.forEach(product => {
+                    const current = parseFloat(product.current_shopify_price) || 0;
+                    const calculated = parseFloat(product.calculated_shopify_price) || 0;
+                    const diff = parseFloat(product.price_difference) || 0;
+                    const diffPercent = parseFloat(product.price_difference_percent) || 0;
+                    const diffColor = diff >= 0 ? '#27ae60' : '#e74c3c';
+                    
+                    content += `
+                        <tr style="border-bottom: 1px solid #dee2e6;">
+                            <td style="padding: 12px; font-weight: bold; color: #2c3e50;">${product.sku}</td>
+                            <td style="padding: 12px; color: #555;">${product.name || 'N/A'}</td>
+                            <td style="padding: 12px; text-align: right; font-weight: bold;">$${current.toFixed(2)}</td>
+                            <td style="padding: 12px; text-align: right; font-weight: bold;">$${calculated.toFixed(2)}</td>
+                            <td style="padding: 12px; text-align: right; color: ${diffColor}; font-weight: bold;">
+                                ${diff >= 0 ? '+' : ''}$${diff.toFixed(2)}
+                            </td>
+                            <td style="padding: 12px; text-align: right; color: ${diffColor}; font-weight: bold;">
+                                ${diffPercent >= 0 ? '+' : ''}${diffPercent.toFixed(1)}%
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                content += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            } else {
+                content += `
+                    <div style="text-align: center; padding: 40px; color: #7f8c8d;">
+                        <p>No products found with pricing analysis data.</p>
+                    </div>
+                `;
+            }
+            
+            resultsElement.innerHTML = content;
         }
 
         function testConnections() {
@@ -327,6 +471,14 @@
 
         // Auto-refresh stats every 30 seconds
         setInterval(refreshStats, 30000);
+        
+        // Auto-load pricing analysis data on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load pricing analysis data after a short delay to ensure page is fully loaded
+            setTimeout(() => {
+                loadPricingAnalysisData();
+            }, 1000);
+        });
     </script>
 </body>
 </html>
