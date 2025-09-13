@@ -104,10 +104,19 @@ class JDSProduct:
         self.local_quantity = kwargs.get('local_quantity')
         self.last_updated = kwargs.get('last_updated', datetime.utcnow())
     
-    def save(self, db):
+    def save(self, db_or_conn):
         """Save product to database"""
-        conn = db.connect()
-        cursor = conn.cursor()
+        # Check if we received a connection or database object
+        if hasattr(db_or_conn, 'connect'):
+            # It's a database object, create connection
+            conn = db_or_conn.connect()
+            cursor = conn.cursor()
+            should_close = True
+        else:
+            # It's a connection object
+            conn = db_or_conn
+            cursor = conn.cursor()
+            should_close = False
         
         try:
             if self.id:
@@ -147,15 +156,18 @@ class JDSProduct:
                 ))
                 self.id = cursor.lastrowid
             
-            conn.commit()
+            if should_close:
+                conn.commit()
             return True
             
         except Exception as e:
             print(f"Error saving JDS product: {e}")
-            conn.rollback()
+            if should_close:
+                conn.rollback()
             return False
         finally:
-            conn.close()
+            if should_close:
+                conn.close()
     
     def to_dict(self):
         """Convert to dictionary for JSON serialization"""

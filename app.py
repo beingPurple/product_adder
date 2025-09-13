@@ -53,6 +53,23 @@ app = Flask(__name__)
 
 # Configure app
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['API_KEY'] = os.environ.get('APP_API_KEY')  # set in env; no default in prod
+
+# Simple header-based API key gate for internal/admin APIs
+from functools import wraps
+def require_api_key(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        api_key = app.config.get('API_KEY')
+        provided = request.headers.get('X-API-Key')
+        if not api_key or provided != api_key:
+            return jsonify({'error': 'Unauthorized'}), 401
+        return fn(*args, **kwargs)
+    return wrapper
+
+# Fail fast if API_KEY is missing in production
+if os.environ.get('FLASK_ENV') == 'production' and not app.config.get('API_KEY'):
+    raise ValueError("APP_API_KEY environment variable is required in production")
 
 @app.route('/')
 def index():
@@ -134,6 +151,7 @@ from pricing_calculator import pricing_calculator
 ...
 
 @app.route('/api/sync/jds', methods=['POST'])
+@require_api_key
 def sync_jds():
     """Sync JDS data with specific SKUs or sample SKUs"""
     try:
@@ -147,6 +165,7 @@ def sync_jds():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/sync/shopify', methods=['POST'])
+@require_api_key
 def sync_shopify():
     """Sync Shopify data"""
     try:
@@ -166,6 +185,7 @@ def sync_status():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/sync/all', methods=['POST'])
+@require_api_key
 def sync_all():
     """Sync all data from JDS and Shopify APIs"""
     try:
@@ -347,6 +367,7 @@ def test_connections():
 # Phase 3 API Routes - Bulk Operations
 
 @app.route('/api/products/bulk-add', methods=['POST'])
+@require_api_key
 def bulk_add_products():
     """Add multiple products to Shopify"""
     try:
@@ -414,6 +435,7 @@ def bulk_add_products():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/products/bulk-update-pricing', methods=['POST'])
+@require_api_key
 def bulk_update_pricing():
     """Update pricing for multiple existing products"""
     try:
@@ -476,14 +498,18 @@ def bulk_update_pricing():
                     # Update local database
                     from database import db
                     conn = db.connect()
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        'UPDATE shopify_products SET current_price = ?, last_updated = CURRENT_TIMESTAMP WHERE sku = ?',
-                        (new_price, product['sku'])
-                    )
-                    conn.commit()
-                    conn.close()
-                    
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            'UPDATE shopify_products SET current_price = ?, last_updated = CURRENT_TIMESTAMP WHERE sku = ?',
+                            (new_price, product['sku'])
+                        )
+                        conn.commit()
+                    finally:
+                        try:
+                            conn.close()
+                        except Exception:
+                            logger.warning("Failed to close DB connection for sku=%s", product.get('sku'))
                     results.append({
                         'sku': product['sku'],
                         'name': product['name'],
@@ -532,6 +558,7 @@ def bulk_update_pricing():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/products/create-single', methods=['POST'])
+@require_api_key
 def create_single_product():
     """Create a single product in Shopify"""
     try:
@@ -571,6 +598,7 @@ def create_single_product():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/products/update-single-price', methods=['POST'])
+@require_api_key
 def update_single_price():
     """Update price for a single product in Shopify"""
     try:
@@ -614,13 +642,18 @@ def update_single_price():
             # Update local database
             from database import db
             conn = db.connect()
-            cursor = conn.cursor()
-            cursor.execute(
-                'UPDATE shopify_products SET current_price = ?, last_updated = CURRENT_TIMESTAMP WHERE sku = ?',
-                (new_price, sku)
-            )
-            conn.commit()
-            conn.close()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'UPDATE shopify_products SET current_price = ?, last_updated = CURRENT_TIMESTAMP WHERE sku = ?',
+                    (new_price, sku)
+                )
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    logger.warning("Failed to close DB connection for sku=%s", sku)
         
         return jsonify(result)
         
@@ -629,6 +662,7 @@ def update_single_price():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/products/rollback', methods=['POST'])
+@require_api_key
 def rollback_products():
     """Rollback created products by deleting them from Shopify"""
     try:

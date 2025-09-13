@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Product Adder - Shopify Catalog Manager</title>
     <style>
         body {
@@ -217,26 +216,7 @@
             messageArea.replaceChildren(div);
             setTimeout(() => messageArea.replaceChildren(), 5000);
         }
-            // Fallback to cookie
-            const cookies = document.cookie.split(';');
-            for (let cookie of cookies) {
-                const [name, value] = cookie.trim().split('=');
-                if (name === 'csrftoken') {
-                    return value;
-                }
-            }
-            
-            return null;
-        }
 
-        function showMessage(message, type = 'info') {
-            const messageArea = document.getElementById('message-area');
-            const className = type === 'error' ? 'error' : 'success-msg';
-            messageArea.innerHTML = `<div class="${className}">${message}</div>`;
-            setTimeout(() => {
-                messageArea.innerHTML = '';
-            }, 5000);
-        }
 
         function syncAllData() {
             const syncButton = document.querySelector('button[onclick="syncAllData()"]');
@@ -248,20 +228,11 @@
             
             showMessage('Starting data sync...', 'info');
             
-            // Get CSRF token
-            const csrfToken = getCsrfToken();
-            if (!csrfToken) {
-                showMessage('CSRF token not found. Please refresh the page.', 'error');
-                syncButton.disabled = false;
-                syncButton.textContent = originalText;
-                return;
-            }
-            
             fetch('/api/sync/all', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken
+                    'X-API-Key': '{{ app.config.API_KEY }}'
                 },
                 body: JSON.stringify({ force: true })
             })

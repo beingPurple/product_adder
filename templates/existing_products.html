@@ -365,17 +365,26 @@ function setupEventListeners() {
     document.getElementById('difference-filter').addEventListener('change', filterProducts);
     document.getElementById('sort-filter').addEventListener('change', filterProducts);
     
-    // Clickable price updates - use event delegation for dynamically created elements
+    // Clickable price updates - event delegation for dynamically created elements
+    function handlePriceActivation(el) {
+        if (!el || el.classList.contains('is-busy')) return;
+        const { sku, currentPrice, recommendedPrice } = el.dataset;
+        if (sku && currentPrice && recommendedPrice) {
+            updateProductPrice(sku, parseFloat(currentPrice), parseFloat(recommendedPrice), el);
+        }
+    }
+
     document.addEventListener('click', function(event) {
-        if (event.target.closest('.clickable-price')) {
-            const priceElement = event.target.closest('.clickable-price');
-            const sku = priceElement.dataset.sku;
-            const currentPrice = priceElement.dataset.currentPrice;
-            const recommendedPrice = priceElement.dataset.recommendedPrice;
-            
-            if (sku && currentPrice && recommendedPrice) {
-                updateProductPrice(sku, parseFloat(currentPrice), parseFloat(recommendedPrice));
-            }
+        const el = event.target.closest('.clickable-price');
+        if (el) handlePriceActivation(el);
+    });
+
+    document.addEventListener('keydown', function(event) {
+        const el = event.target.closest('.clickable-price');
+        if (!el) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handlePriceActivation(el);
         }
     });
 }
@@ -648,13 +657,15 @@ function createProductCard(product) {
                                 <div class="price-label">Current Shopify Price</div>
                                 <div class="price-value">$${safeToFixed(currentPrice, 2)}</div>
                             </div>
-                            <div class="price-comparison-item recommended clickable-price" 
+                            <div class="price-comparison-item recommended clickable-price"
+                                 role="button" tabindex="0"
+                                 aria-label="Update price for SKU ${escapeHtml(product.sku)} to ${safeToFixed(calculatedPrice, 2)}"
                                  data-sku="${escapeHtml(product.sku)}" 
                                  data-current-price="${safeToFixed(currentPrice, 2)}" 
                                  data-recommended-price="${safeToFixed(calculatedPrice, 2)}"
                                  title="Click to update price to recommended value">
                                 <div class="price-label">Recommended Price</div>
-                                <div class="price-value">$${safeToFixed(calculatedPrice, 2)}</div>
+                                <div class="price-value">${safeToFixed(calculatedPrice, 2)}</div>
                                 <div class="price-hint">Click to update</div>
                             </div>
                             <div class="price-comparison-item">

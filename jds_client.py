@@ -122,28 +122,24 @@ class JDSClient:
         Fetch all available SKUs from Shopify store
         These will be checked against the JDS catalog
         """
+        conn = None
         try:
-            from database import db
             from dotenv import load_dotenv
             
             # Ensure environment variables are loaded
             load_dotenv()
             
-            conn = None
-            try:
-                conn = db.connect()
-                cursor = conn.cursor()
-                
-                # Get all SKUs from Shopify
-                cursor.execute('SELECT sku FROM shopify_products')
-                all_skus = [row[0] for row in cursor.fetchall()]
-                
-                logger.info(f"Found {len(all_skus)} total SKUs in Shopify store")
-                return all_skus
-            finally:
-                if conn:
-                    conn.close()
+            conn = db.connect()
+            cursor = conn.cursor()
             
+            # Get all SKUs from Shopify
+            cursor.execute("SELECT sku FROM shopify_products WHERE sku IS NOT NULL AND sku <> ''")
+            rows = cursor.fetchall()
+            # strip whitespace and de-duplicate
+            all_skus = sorted({(row[0] or '').strip() for row in rows if row and row[0]})
+            
+            logger.info(f"Found {len(all_skus)} total SKUs in Shopify store")
+            return all_skus
         except Exception as e:
             logger.error(f"Error fetching SKUs from Shopify: {e}")
             # Fallback to sample SKUs if there's an error
@@ -153,6 +149,12 @@ class JDSClient:
             ]
             logger.info(f"Using fallback sample SKUs: {len(sample_skus)} SKUs")
             return sample_skus
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
     
     def sync_products(self, skus: Optional[List[str]] = None) -> Dict[str, Any]:
         """
@@ -217,34 +219,26 @@ class JDSClient:
         if not sku:
             raise ValueError("Product SKU is required")
         
-        conn = None
         try:
-            conn = db.connect()
-            cursor = conn.cursor()
-            
-            # Check if product already exists
-            cursor.execute('SELECT * FROM jds_products WHERE sku = ?', (sku,))
-            existing_row = cursor.fetchone()
-            
-            if existing_row:
-                # Convert tuple to dict using column names
-                cols = [c[0] for c in cursor.description]
-                row_dict = dict(zip(cols, existing_row))
-                
-                # Update existing product
-                existing_product = JDSProduct(**row_dict)
-                self._update_product_from_data(existing_product, product_data)
-                existing_product.save(db)
-            else:
-                # Create new product
-                new_product = self._create_product_from_data(product_data)
-                new_product.save(db)
+            with db.connect() as conn:
+                with conn.cursor() as cursor:
+                    # Check if product already exists
+                    cursor.execute('SELECT * FROM jds_products WHERE sku = ?', (sku,))
+                    existing_row = cursor.fetchone()
+                    
+                    if existing_row:
+                        cols = [c[0] for c in cursor.description]
+                        row_dict = dict(zip(cols, existing_row))
+                        existing_product = JDSProduct(**row_dict)
+                        self._update_product_from_data(existing_product, product_data)
+                        existing_product.save(conn)
+                    else:
+                        new_product = self._create_product_from_data(product_data)
+                        new_product.save(conn)
+                conn.commit()
         except Exception as e:
             logger.error(f"Error saving product {sku} to database: {e}")
             raise e
-        finally:
-            if conn:
-                conn.close()
     
     def _create_product_from_data(self, data: Dict[str, Any]) -> JDSProduct:
         """Create a new JDSProduct from API data"""
