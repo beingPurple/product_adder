@@ -473,8 +473,18 @@
         }
 
         function testConnections() {
-            fetch('/api/test/connections')
-            .then(response => response.json())
+            fetch('/api/test/connections', {
+                method: 'GET',
+                headers: {
+                    'X-API-Key': '{{ api_key }}'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 const jdsStatus = data.jds_api.connected ? 'Connected' : 'Disconnected';
                 const shopifyStatus = data.shopify_api.connected ? 'Connected' : 'Disconnected';
