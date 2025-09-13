@@ -26,14 +26,24 @@ from performance_monitor import performance_monitor, get_performance_summary, ge
 from pagination import paginate_data, paginate_query, validate_pagination_params
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # Console output
-        logging.FileHandler('app.log')  # File output
-    ]
-)
+# For Vercel serverless environment, only use console logging
+if os.environ.get('VERCEL'):
+    # Vercel environment - only console logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
+else:
+    # Local environment - console and file logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),  # Console output
+            logging.FileHandler('app.log')  # File output
+        ]
+    )
 logger = logging.getLogger(__name__)
 
 # Create Flask app
