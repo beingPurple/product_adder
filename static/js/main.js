@@ -272,10 +272,10 @@ async function addSelectedProducts(skus) {
         const data = await response.json();
         
         if (data.success) {
-            showAlert('success', data.message);
+            showDetailedResults('success', 'Product Creation Results', data);
             return data;
         } else {
-            showAlert('danger', data.error || 'Failed to add products');
+            showDetailedResults('danger', 'Product Creation Failed', data);
             return null;
         }
     } catch (error) {
@@ -303,10 +303,10 @@ async function updateSelectedPricing(skus) {
         const data = await response.json();
         
         if (data.success) {
-            showAlert('success', data.message);
+            showDetailedResults('success', 'Price Update Results', data);
             return data;
         } else {
-            showAlert('danger', data.error || 'Failed to update pricing');
+            showDetailedResults('danger', 'Price Update Failed', data);
             return null;
         }
     } catch (error) {
@@ -314,6 +314,71 @@ async function updateSelectedPricing(skus) {
         showAlert('danger', 'Error updating pricing: ' + error.message);
         return null;
     }
+}
+
+function showDetailedResults(type, title, data) {
+    const alertContainer = document.querySelector('.container');
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    
+    let content = `
+        <h5 class="alert-heading">${title}</h5>
+        <p><strong>Summary:</strong> ${data.message}</p>
+    `;
+    
+    if (data.created_count !== undefined) {
+        content += `<p><strong>Created:</strong> ${data.created_count} products</p>`;
+    }
+    if (data.updated_count !== undefined) {
+        content += `<p><strong>Updated:</strong> ${data.updated_count} products</p>`;
+    }
+    if (data.failed_count !== undefined && data.failed_count > 0) {
+        content += `<p><strong>Failed:</strong> ${data.failed_count} products</p>`;
+    }
+    
+    if (data.validation_errors && data.validation_errors.length > 0) {
+        content += `
+            <div class="mt-3">
+                <strong>Validation Errors:</strong>
+                <ul class="mb-0">
+                    ${data.validation_errors.map(error => 
+                        `<li><strong>${error.sku}</strong> (${error.name}): ${error.errors.join(', ')}</li>`
+                    ).join('')}
+                </ul>
+            </div>
+        `;
+    }
+    
+    if (data.results && data.results.length > 0) {
+        const failedResults = data.results.filter(r => !r.success);
+        if (failedResults.length > 0) {
+            content += `
+                <div class="mt-3">
+                    <strong>Failed Products:</strong>
+                    <ul class="mb-0">
+                        ${failedResults.map(result => 
+                            `<li><strong>${result.sku}</strong> (${result.name}): ${result.error}</li>`
+                        ).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+    }
+    
+    content += `
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    alertDiv.innerHTML = content;
+    alertContainer.insertBefore(alertDiv, alertContainer.firstChild);
+    
+    // Auto-dismiss after 10 seconds for success, 15 seconds for errors
+    const duration = type === 'success' ? 10000 : 15000;
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, duration);
 }
 
 // Utility function for escaping HTML
@@ -343,6 +408,7 @@ window.ProductAdder = {
     syncShopify,
     syncAll,
     showAlert,
+    showDetailedResults,
     updateStatusBadge,
     updateConnectionStatus,
     addSelectedProducts,

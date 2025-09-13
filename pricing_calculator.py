@@ -64,6 +64,10 @@ class PricingCalculator:
             jds_price: JDS lessThanCasePrice value (can be string or numeric)
             
         Returns:
+            Calculated Shopify price
+        """
+        return self.calculate_price(self.regular_formula, jds_price, self.under5_formula)
+    
     def calculate_all_tiers(self, jds_product: Dict[str, Any]) -> Dict[str, float]:
         """
         Calculate Shopify prices for all JDS pricing tiers
@@ -91,9 +95,6 @@ class PricingCalculator:
             price = jds_product.get(jds_key)
             if price and self._is_valid_price(price):
                 results[result_key] = self.calculate_shopify_price(price)
-        
-        return results
-            results['forty_cases'] = self.calculate_shopify_price(price)
         
         return results
     

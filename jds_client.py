@@ -15,6 +15,10 @@ class JDSClient:
     """Client for interacting with JDS API"""
     
     def __init__(self):
+        # Load environment variables first
+        from dotenv import load_dotenv
+        load_dotenv()
+        
         self.api_url = os.getenv('EXTERNAL_API_URL', 'https://api.jdsapp.com/get-product-details-by-skus')
         self.api_token = os.getenv('EXTERNAL_API_TOKEN')
         self.session = requests.Session()
@@ -125,14 +129,20 @@ class JDSClient:
             # Ensure environment variables are loaded
             load_dotenv()
             
-            with db.connect() as conn:
-                with conn.cursor() as cursor:
-                    # Get all SKUs from Shopify
-                    cursor.execute('SELECT sku FROM shopify_products')
-                    all_skus = [row[0] for row in cursor.fetchall()]
-            
-            logger.info(f"Found {len(all_skus)} total SKUs in Shopify store")
-            return all_skus
+            conn = None
+            try:
+                conn = db.connect()
+                cursor = conn.cursor()
+                
+                # Get all SKUs from Shopify
+                cursor.execute('SELECT sku FROM shopify_products')
+                all_skus = [row[0] for row in cursor.fetchall()]
+                
+                logger.info(f"Found {len(all_skus)} total SKUs in Shopify store")
+                return all_skus
+            finally:
+                if conn:
+                    conn.close()
             
         except Exception as e:
             logger.error(f"Error fetching SKUs from Shopify: {e}")
@@ -207,29 +217,34 @@ class JDSClient:
         if not sku:
             raise ValueError("Product SKU is required")
         
+        conn = None
         try:
-            with db.connect() as conn:
-                with conn.cursor() as cursor:
-                    # Check if product already exists
-                    cursor.execute('SELECT * FROM jds_products WHERE sku = ?', (sku,))
-                    existing_row = cursor.fetchone()
-                    
-                    if existing_row:
-                        # Convert tuple to dict using column names
-                        cols = [c[0] for c in cursor.description]
-                        row_dict = dict(zip(cols, existing_row))
-                        
-                        # Update existing product
-                        existing_product = JDSProduct(**row_dict)
-                        self._update_product_from_data(existing_product, product_data)
-                        existing_product.save(db)
-                    else:
-                        # Create new product
-                        new_product = self._create_product_from_data(product_data)
-                        new_product.save(db)
+            conn = db.connect()
+            cursor = conn.cursor()
+            
+            # Check if product already exists
+            cursor.execute('SELECT * FROM jds_products WHERE sku = ?', (sku,))
+            existing_row = cursor.fetchone()
+            
+            if existing_row:
+                # Convert tuple to dict using column names
+                cols = [c[0] for c in cursor.description]
+                row_dict = dict(zip(cols, existing_row))
+                
+                # Update existing product
+                existing_product = JDSProduct(**row_dict)
+                self._update_product_from_data(existing_product, product_data)
+                existing_product.save(db)
+            else:
+                # Create new product
+                new_product = self._create_product_from_data(product_data)
+                new_product.save(db)
         except Exception as e:
             logger.error(f"Error saving product {sku} to database: {e}")
             raise e
+        finally:
+            if conn:
+                conn.close()
     
     def _create_product_from_data(self, data: Dict[str, Any]) -> JDSProduct:
         """Create a new JDSProduct from API data"""
@@ -244,9 +259,9 @@ class JDSClient:
             ten_cases=data.get('tenCases'),
             twenty_cases=data.get('twentyCases'),
             forty_cases=data.get('fortyCases'),
-            image_url=data.get('imageUrl', ''),
-            thumbnail_url=data.get('thumbnailUrl', ''),
-            quick_image_url=data.get('quickImageUrl', ''),
+            image_url=data.get('image', ''),  # Fixed: API returns 'image' not 'imageUrl'
+            thumbnail_url=data.get('thumbnail', ''),  # Fixed: API returns 'thumbnail' not 'thumbnailUrl'
+            quick_image_url=data.get('quickImage', ''),  # Fixed: API returns 'quickImage' not 'quickImageUrl'
             available_quantity=data.get('availableQuantity'),
             local_quantity=data.get('localQuantity')
         )
@@ -262,9 +277,9 @@ class JDSClient:
         product.ten_cases = data.get('tenCases', product.ten_cases)
         product.twenty_cases = data.get('twentyCases', product.twenty_cases)
         product.forty_cases = data.get('fortyCases', product.forty_cases)
-        product.image_url = data.get('imageUrl', product.image_url)
-        product.thumbnail_url = data.get('thumbnailUrl', product.thumbnail_url)
-        product.quick_image_url = data.get('quickImageUrl', product.quick_image_url)
+        product.image_url = data.get('image', product.image_url)  # Fixed: API returns 'image' not 'imageUrl'
+        product.thumbnail_url = data.get('thumbnail', product.thumbnail_url)  # Fixed: API returns 'thumbnail' not 'thumbnailUrl'
+        product.quick_image_url = data.get('quickImage', product.quick_image_url)  # Fixed: API returns 'quickImage' not 'quickImageUrl'
         product.available_quantity = data.get('availableQuantity', product.available_quantity)
         product.local_quantity = data.get('localQuantity', product.local_quantity)
     

@@ -247,55 +247,55 @@ class DataSyncManager:
     
     def _validate_jds_data(self) -> Dict[str, Any]:
         """Validate JDS data integrity"""
+        conn = None
         try:
-        def _validate_jds_data(self) -> Dict[str, Any]:
-            """Validate JDS data integrity"""
-            conn = None
-            try:
-                conn = db.connect()
-                cursor = conn.cursor()
-                
-                # Check for products with missing required fields
-                cursor.execute('''
-                    SELECT COUNT(*) FROM jds_products 
-                    WHERE sku IS NULL OR sku = '' OR name IS NULL OR name = ''
-                ''')
-                invalid_products = cursor.fetchone()[0]
-                
-                # Check for products with no pricing data
-                cursor.execute('''
-                    SELECT COUNT(*) FROM jds_products 
-                    WHERE less_than_case_price IS NULL 
-                    AND one_case IS NULL 
-                    AND five_cases IS NULL 
-                    AND ten_cases IS NULL 
-                    AND twenty_cases IS NULL 
-                    AND forty_cases IS NULL
-                ''')
-                no_pricing = cursor.fetchone()[0]
-                
-                # Get total count
-                cursor.execute('SELECT COUNT(*) FROM jds_products')
-                total_products = cursor.fetchone()[0]
-                
-                return {
-                    'success': invalid_products == 0,
-                    'total_products': total_products,
-                    'invalid_products': invalid_products,
-                    'no_pricing_products': no_pricing,
-                    'warnings': [
-                        f"{invalid_products} products with missing required fields",
-                        f"{no_pricing} products with no pricing data"
-                    ] if invalid_products > 0 or no_pricing > 0 else []
-                }
-                
-            except Exception as e:
-                logger.error(f"Error validating JDS data: {e}")
-                return {
-                    'success': False,
-                    'error': str(e)
-                }
-            finally:
+            conn = db.connect()
+            cursor = conn.cursor()
+            
+            # Check for products with missing required fields
+            cursor.execute('''
+                SELECT COUNT(*) FROM jds_products 
+                WHERE sku IS NULL OR sku = '' OR name IS NULL OR name = ''
+            ''')
+            invalid_products = cursor.fetchone()[0]
+            
+            # Check for products with no pricing data
+            cursor.execute('''
+                SELECT COUNT(*) FROM jds_products 
+                WHERE less_than_case_price IS NULL 
+                AND one_case IS NULL 
+                AND five_cases IS NULL 
+                AND ten_cases IS NULL 
+                AND twenty_cases IS NULL 
+                AND forty_cases IS NULL
+            ''')
+            no_pricing = cursor.fetchone()[0]
+            
+            # Get total count
+            cursor.execute('SELECT COUNT(*) FROM jds_products')
+            total_products = cursor.fetchone()[0]
+            
+            return {
+                'success': invalid_products == 0,
+                'total_products': total_products,
+                'invalid_products': invalid_products,
+                'no_pricing_products': no_pricing,
+                'warnings': [
+                    f"{invalid_products} products with missing required fields",
+                    f"{no_pricing} products with no pricing data"
+                ] if invalid_products > 0 or no_pricing > 0 else []
+            }
+            
+        except Exception as e:
+            logger.error(f"Error validating JDS data: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+        finally:
+            if conn:
+                conn.close()
+    
     def _validate_shopify_data(self) -> Dict[str, Any]:
         """Validate Shopify data integrity"""
         conn = None
@@ -332,8 +332,6 @@ class DataSyncManager:
         finally:
             if conn:
                 conn.close()
-                'error': str(e)
-            }
     
     def _validate_shopify_data(self) -> Dict[str, Any]:
         """Validate Shopify data integrity"""

@@ -103,6 +103,36 @@
         border-color: #4caf50;
     }
     
+    .price-comparison-item.clickable-price {
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+    }
+    
+    .price-comparison-item.clickable-price:hover {
+        background: #d4edda;
+        border-color: #28a745;
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(40, 167, 69, 0.2);
+    }
+    
+    .price-comparison-item.clickable-price:active {
+        transform: translateY(0);
+        box-shadow: 0 1px 4px rgba(40, 167, 69, 0.3);
+    }
+    
+    .price-hint {
+        font-size: 0.7rem;
+        color: #28a745;
+        margin-top: 2px;
+        font-weight: 500;
+        opacity: 0.8;
+    }
+    
+    .price-comparison-item.clickable-price:hover .price-hint {
+        opacity: 1;
+    }
+    
     .price-label {
         font-size: 0.75rem;
         color: #666;
@@ -334,6 +364,20 @@ function setupEventListeners() {
     document.getElementById('pricing-filter').addEventListener('change', filterProducts);
     document.getElementById('difference-filter').addEventListener('change', filterProducts);
     document.getElementById('sort-filter').addEventListener('change', filterProducts);
+    
+    // Clickable price updates - use event delegation for dynamically created elements
+    document.addEventListener('click', function(event) {
+        if (event.target.closest('.clickable-price')) {
+            const priceElement = event.target.closest('.clickable-price');
+            const sku = priceElement.dataset.sku;
+            const currentPrice = priceElement.dataset.currentPrice;
+            const recommendedPrice = priceElement.dataset.recommendedPrice;
+            
+            if (sku && currentPrice && recommendedPrice) {
+                updateProductPrice(sku, parseFloat(currentPrice), parseFloat(recommendedPrice));
+            }
+        }
+    });
 }
 
 function debounce(func, wait) {
@@ -604,9 +648,14 @@ function createProductCard(product) {
                                 <div class="price-label">Current Shopify Price</div>
                                 <div class="price-value">$${safeToFixed(currentPrice, 2)}</div>
                             </div>
-                            <div class="price-comparison-item recommended">
+                            <div class="price-comparison-item recommended clickable-price" 
+                                 data-sku="${escapeHtml(product.sku)}" 
+                                 data-current-price="${safeToFixed(currentPrice, 2)}" 
+                                 data-recommended-price="${safeToFixed(calculatedPrice, 2)}"
+                                 title="Click to update price to recommended value">
                                 <div class="price-label">Recommended Price</div>
                                 <div class="price-value">$${safeToFixed(calculatedPrice, 2)}</div>
+                                <div class="price-hint">Click to update</div>
                             </div>
                             <div class="price-comparison-item">
                                 <div class="price-label">Difference</div>
@@ -667,6 +716,88 @@ function showError(message) {
         window.ProductAdder.showAlert('danger', message);
     } else {
         alert(message);
+    }
+}
+
+async function updateProductPrice(sku, currentPrice, recommendedPrice) {
+    // Show confirmation dialog
+    const confirmed = showConfirmation(
+        'Update Product Price',
+        `Are you sure you want to update the price for SKU ${sku}?\n\n` +
+        `Current Price: $${currentPrice.toFixed(2)}\n` +
+        `New Price: $${recommendedPrice.toFixed(2)}\n\n` +
+        `This will update the price in Shopify.`,
+        'Update Price',
+        'Cancel'
+    );
+    
+    if (!confirmed) {
+        return;
+    }
+    
+    try {
+        // Show loading state
+        const priceElement = document.querySelector(`[data-sku="${sku}"].clickable-price`);
+        if (priceElement) {
+            priceElement.style.opacity = '0.6';
+            priceElement.style.pointerEvents = 'none';
+        }
+        
+        const response = await fetch('/api/products/update-single-price', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ sku: sku })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showAlert('success', `Price updated successfully for ${sku}: $${currentPrice.toFixed(2)} → $${recommendedPrice.toFixed(2)}`);
+            
+            // Reload products to show updated data
+            await loadProducts();
+        } else {
+            showAlert('danger', `Failed to update price for ${sku}: ${data.error || 'Unknown error'}`);
+            
+            // Restore clickable state
+            if (priceElement) {
+                priceElement.style.opacity = '1';
+                priceElement.style.pointerEvents = 'auto';
+            }
+        }
+    } catch (error) {
+        console.error('Error updating product price:', error);
+        showAlert('danger', `Error updating price for ${sku}: ${error.message}`);
+        
+        // Restore clickable state
+        if (priceElement) {
+            priceElement.style.opacity = '1';
+            priceElement.style.pointerEvents = 'auto';
+        }
+    }
+}
+
+function showConfirmation(title, message, confirmText = 'OK', cancelText = 'Cancel') {
+    // Use browser's native confirm dialog for now
+    // In a more sophisticated implementation, you could use a custom modal
+    return confirm(`${title}\n\n${message}`);
+}
+
+function showAlert(type, message) {
+    // Use the existing alert system from main.js
+    if (window.ProductAdder && window.ProductAdder.showAlert) {
+        window.ProductAdder.showAlert(type, message);
+    } else {
+        // Fallback to browser alert
+        if (type === 'success') {
+            alert('✅ ' + message);
+        } else if (type === 'danger') {
+            alert('❌ ' + message);
+        } else {
+            alert(message);
+        }
     }
 }
 
