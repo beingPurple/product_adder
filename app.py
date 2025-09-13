@@ -1,24 +1,7 @@
 #!/usr/bin/env python3
 """
-Product Adder Flask Application - Phase 2
-Implements pricing calculator, SKU comparison, and data synchronization
-"""
-
-from flask import Flask, jsonify, render_template, request
-import os
-import sys
-import logging
-from datetime import datetime
-from dotenv import load_dotenv
-from database import init_db, get_sku_comparison_stats, get_unmatched_products, get_matched_products
-from data_sync import sync_all_data, get_unmatched_products_with_pricing, get_sync_status
-from pricing_calculator import pricing_calculator
-from jds_client import JDSClient
-from shopify_client import ShopifyClient
-#!/usr/bin/env python3
-"""
-Product Adder Flask Application - Phase 2
-Implements pricing calculator, SKU comparison, and data synchronization
+Product Adder Flask Application - Phase 5 Complete
+Implements optimization, monitoring, and production-ready features
 """
 
 from dotenv import load_dotenv
@@ -29,13 +12,18 @@ from flask import Flask, jsonify, render_template, request
 import os
 import sys
 import logging
+import time
 from datetime import datetime
 from database import init_db, get_sku_comparison_stats, get_unmatched_products, get_matched_products
+from database import get_unmatched_products_optimized, get_matched_products_optimized, get_sku_comparison_stats_optimized
+from database import optimize_database, get_database_stats
 from data_sync import sync_all_data, get_unmatched_products_with_pricing, get_sync_status
 from pricing_calculator import pricing_calculator
 from jds_client import JDSClient
 from shopify_client import ShopifyClient
-load_dotenv()
+from cache_manager import cache_manager, clear_cache, get_cache_stats
+from performance_monitor import performance_monitor, get_performance_summary, get_performance_health, record_metric, record_api_call, time_api_call
+from pagination import paginate_data, paginate_query, validate_pagination_params
 
 # Configure logging
 logging.basicConfig(
@@ -106,16 +94,291 @@ def existing_products():
         logger.error(f"Error loading existing products page: {e}")
         return f"Error loading existing products page: {e}", 500
 
+# Phase 5: Performance and Monitoring Endpoints
+
+@app.route('/api/performance/summary')
+@time_api_call('/api/performance/summary', 'GET')
+def performance_summary():
+    """Get performance summary and metrics"""
+    try:
+        summary = get_performance_summary()
+        health = get_performance_health()
+        
+        return jsonify({
+            'success': True,
+            'performance': summary,
+            'health': health,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting performance summary: {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/performance/summary"})
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/performance/health')
+@time_api_call('/api/performance/health', 'GET')
+def performance_health():
+    """Get performance health status"""
+    try:
+        health = get_performance_health()
+        return jsonify({
+            'success': True,
+            'health': health,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting performance health: {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/performance/health"})
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/cache/stats')
+@time_api_call('/api/cache/stats', 'GET')
+def cache_stats():
+    """Get cache statistics"""
+    try:
+        stats = get_cache_stats()
+        return jsonify({
+            'success': True,
+            'cache_stats': stats,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting cache stats: {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/cache/stats"})
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/cache/clear', methods=['POST'])
+@require_api_key
+@time_api_call('/api/cache/clear', 'POST')
+def cache_clear():
+    """Clear all cache entries"""
+    try:
+        clear_cache()
+        record_metric("cache_cleared", 1)
+        return jsonify({
+            'success': True,
+            'message': 'Cache cleared successfully',
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/cache/clear"})
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/database/stats')
+@time_api_call('/api/database/stats', 'GET')
+def database_stats():
+    """Get database statistics"""
+    try:
+        stats = get_database_stats()
+        return jsonify({
+            'success': True,
+            'database_stats': stats,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting database stats: {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/database/stats"})
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/database/optimize', methods=['POST'])
+@require_api_key
+@time_api_call('/api/database/optimize', 'POST')
+def database_optimize():
+    """Optimize database performance"""
+    try:
+        result = optimize_database()
+        record_metric("database_optimized", 1)
+        return jsonify({
+            'success': True,
+            'optimization_result': result,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error optimizing database: {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/database/optimize"})
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/products/unmatched-optimized')
+@time_api_call('/api/products/unmatched-optimized', 'GET')
+def unmatched_products_optimized():
+    """Get unmatched products with pagination and caching"""
+    try:
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        
+        # Validate pagination parameters
+        page, per_page = validate_pagination_params(page, per_page, max_per_page=100)
+        
+        # Get products with pagination
+        products, total_count = get_unmatched_products_optimized(
+            offset=(page - 1) * per_page,
+            limit=per_page
+        )
+        
+        # Convert to dictionaries
+        products_data = [product.to_dict() for product in products]
+        
+        # Add pricing information
+        from pricing_calculator import pricing_calculator
+        products_with_pricing = []
+        for product_dict in products_data:
+            pricing_validation = pricing_calculator.validate_pricing_data(product_dict)
+            product_dict['calculated_prices'] = pricing_validation['calculated_prices']
+            product_dict['recommended_price'] = pricing_validation['recommended_price']
+            product_dict['pricing_valid'] = pricing_validation['is_valid']
+            product_dict['pricing_warnings'] = pricing_validation['warnings']
+            product_dict['pricing_errors'] = pricing_validation['errors']
+            products_with_pricing.append(product_dict)
+        
+        # Create pagination response
+        total_pages = (total_count + per_page - 1) // per_page
+        pagination_info = {
+            'page': page,
+            'per_page': per_page,
+            'total': total_count,
+            'total_pages': total_pages,
+            'has_next': page < total_pages,
+            'has_prev': page > 1,
+            'next_page': page + 1 if page < total_pages else None,
+            'prev_page': page - 1 if page > 1 else None
+        }
+        
+        record_metric("unmatched_products_requested", len(products_with_pricing))
+        
+        return jsonify({
+            'success': True,
+            'products': products_with_pricing,
+            'pagination': pagination_info,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting unmatched products (optimized): {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/products/unmatched-optimized"})
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/products/matched-optimized')
+@time_api_call('/api/products/matched-optimized', 'GET')
+def matched_products_optimized():
+    """Get matched products with pagination and caching"""
+    try:
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        
+        # Validate pagination parameters
+        page, per_page = validate_pagination_params(page, per_page, max_per_page=100)
+        
+        # Get products with pagination
+        products, total_count = get_matched_products_optimized(
+            offset=(page - 1) * per_page,
+            limit=per_page
+        )
+        
+        # Convert to dictionaries
+        products_data = [product.to_dict() for product in products]
+        
+        # Add Shopify pricing information
+        from database import get_shopify_price_for_sku
+        products_with_pricing = []
+        for product_dict in products_data:
+            shopify_price = get_shopify_price_for_sku(product_dict['sku'])
+            product_dict['current_shopify_price'] = shopify_price
+            
+            # Calculate recommended price
+            from pricing_calculator import pricing_calculator
+            pricing_validation = pricing_calculator.validate_pricing_data(product_dict)
+            product_dict['calculated_shopify_price'] = pricing_validation['recommended_price']
+            product_dict['pricing_valid'] = pricing_validation['is_valid']
+            product_dict['pricing_warnings'] = pricing_validation['warnings']
+            
+            # Calculate price difference
+            if shopify_price and pricing_validation['recommended_price']:
+                price_diff = pricing_validation['recommended_price'] - shopify_price
+                price_diff_percent = (price_diff / shopify_price * 100) if shopify_price > 0 else 0
+                product_dict['price_difference'] = price_diff
+                product_dict['price_difference_percent'] = price_diff_percent
+            else:
+                product_dict['price_difference'] = 0.0
+                product_dict['price_difference_percent'] = 0.0
+            
+            products_with_pricing.append(product_dict)
+        
+        # Create pagination response
+        total_pages = (total_count + per_page - 1) // per_page
+        pagination_info = {
+            'page': page,
+            'per_page': per_page,
+            'total': total_count,
+            'total_pages': total_pages,
+            'has_next': page < total_pages,
+            'has_prev': page > 1,
+            'next_page': page + 1 if page < total_pages else None,
+            'prev_page': page - 1 if page > 1 else None
+        }
+        
+        record_metric("matched_products_requested", len(products_with_pricing))
+        
+        return jsonify({
+            'success': True,
+            'products': products_with_pricing,
+            'pagination': pagination_info,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting matched products (optimized): {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/products/matched-optimized"})
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/comparison/stats-optimized')
+@time_api_call('/api/comparison/stats-optimized', 'GET')
+def comparison_stats_optimized():
+    """Get SKU comparison statistics with caching"""
+    try:
+        stats = get_sku_comparison_stats_optimized()
+        return jsonify({
+            'success': True,
+            'stats': stats,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting comparison stats (optimized): {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/comparison/stats-optimized"})
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/status')
+@time_api_call('/api/status', 'GET')
 def status():
-    return jsonify({
-        'status': 'healthy',
-        'phase': 'Phase 1 Complete',
-        'database': 'SQLite3 (no SQLAlchemy)',
-        'python_version': sys.version.split()[0],
-        'flask_working': True,
-        'message': 'All systems operational'
-    })
+    """Enhanced status endpoint with performance metrics"""
+    try:
+        # Get performance health
+        health = get_performance_health()
+        
+        # Get cache stats
+        cache_stats = get_cache_stats()
+        
+        # Get database stats
+        db_stats = get_database_stats()
+        
+        return jsonify({
+            'status': 'healthy' if health['overall_health'] >= 80 else 'degraded',
+            'phase': 'Phase 5 Complete - Optimization & Monitoring',
+            'database': 'SQLite3 (optimized)',
+            'python_version': sys.version.split()[0],
+            'flask_working': True,
+            'performance_health': health,
+            'cache_stats': cache_stats,
+            'database_stats': db_stats,
+            'message': 'All systems operational with monitoring',
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting status: {e}")
+        record_metric("api_error_count", 1, {"endpoint": "/api/status"})
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/health')
 def health():
@@ -186,14 +449,23 @@ def sync_status():
 
 @app.route('/api/sync/all', methods=['POST'])
 @require_api_key
+@time_api_call('/api/sync/all', 'POST')
 def sync_all():
     """Sync all data from JDS and Shopify APIs"""
     try:
+        start_time = time.time()
         force = request.json.get('force', False) if request.is_json else False
         result = sync_all_data(force=force)
+        
+        # Record performance metrics
+        duration = time.time() - start_time
+        record_metric("sync_all_duration", duration)
+        record_metric("sync_all_success", 1 if result.get('success') else 0)
+        
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error syncing all data: {e}")
+        record_metric("sync_all_error", 1)
         return jsonify({'error': str(e)}), 500
 
 
@@ -714,7 +986,7 @@ def debug_unmatched():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    print("🚀 Starting Product Adder - Phase 4 Complete!")
+    print("🚀 Starting Product Adder - Phase 5 Complete!")
     print("=" * 50)
     print("✅ Database: SQLite3 with full schema")
     print("✅ Pricing Calculator: edit_price formulas integrated")
@@ -724,12 +996,18 @@ if __name__ == '__main__':
     print("✅ Bulk Operations: Mass product creation and price updates")
     print("✅ Error Handling: Retry logic and rollback functionality")
     print("✅ Validation: Product validation before creation")
+    print("✅ Performance: Caching, pagination, and optimization")
+    print("✅ Monitoring: Real-time metrics and health tracking")
+    print("✅ Testing: Comprehensive test suite")
     print("✅ Python: 3.13.7 compatible")
     print("✅ Flask: 3.0.0 running")
     print("=" * 50)
     print("🌐 Open your browser to: http://localhost:5000")
     print("📊 Dashboard: Real-time sync status and statistics")
     print("🔧 API Endpoints: /api/sync, /api/products, /api/pricing")
+    print("📈 Performance: /api/performance/summary, /api/performance/health")
+    print("💾 Cache: /api/cache/stats, /api/cache/clear")
+    print("🗄️ Database: /api/database/stats, /api/database/optimize")
     print("🛒 Product Management: Add products to Shopify with one click")
     print("🛑 Press Ctrl+C to stop")
     print("=" * 50)

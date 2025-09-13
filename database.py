@@ -5,8 +5,13 @@ This avoids SQLAlchemy compatibility issues with Python 3.13
 
 import sqlite3
 import os
+import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
+from cache_manager import cache_manager, cached, cache_key_for_unmatched_products, cache_key_for_matched_products, cache_key_for_comparison_stats
+from performance_monitor import time_function, record_metric
+
+logger = logging.getLogger(__name__)
 
 class SimpleDB:
     def __init__(self, db_path="product_adder.db"):
@@ -437,3 +442,308 @@ def get_product_count(table_name):
     except Exception as e:
         print(f"Error getting product count for {table_name}: {e}")
         return 0
+
+# Phase 5: Optimized database functions with caching and performance monitoring
+
+@cached(ttl=300, key_func=lambda: cache_key_for_unmatched_products())
+@time_function("get_unmatched_products_optimized")
+def get_unmatched_products_optimized(offset: int = 0, limit: int = 100) -> Tuple[List[JDSProduct], int]:
+    """
+    Get unmatched JDS products with pagination and caching
+    
+    Args:
+        offset: Number of records to skip
+        limit: Maximum number of records to return
+        
+    Returns:
+        Tuple of (products_list, total_count)
+    """
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Get total count first
+        cursor.execute('SELECT COUNT(*) FROM jds_products')
+        total_count = cursor.fetchone()[0]
+        
+        # Get Shopify SKUs for comparison (cached)
+        shopify_skus = get_shopify_skus_cached()
+        
+        # Get JDS products with pagination
+        cursor.execute('''
+            SELECT * FROM jds_products 
+            ORDER BY last_updated DESC 
+            LIMIT ? OFFSET ?
+        ''', (limit, offset))
+        
+        jds_rows = cursor.fetchall()
+        unmatched_products = []
+        
+        for row in jds_rows:
+            jds_product = JDSProduct(**dict(row))
+            cleaned_jds_sku = clean_sku_for_comparison(jds_product.sku)
+            
+            # Check if this JDS product exists in Shopify (using cleaned SKUs)
+            if cleaned_jds_sku not in shopify_skus:
+                unmatched_products.append(jds_product)
+        
+        conn.close()
+        
+        # Record performance metrics
+        record_metric("unmatched_products_count", len(unmatched_products))
+        record_metric("unmatched_products_total", total_count)
+        
+        return unmatched_products, total_count
+        
+    except Exception as e:
+        logger.error(f"Error getting unmatched products (optimized): {e}")
+        record_metric("database_error_count", 1, {"function": "get_unmatched_products_optimized"})
+        return [], 0
+
+@cached(ttl=300, key_func=lambda: cache_key_for_matched_products())
+@time_function("get_matched_products_optimized")
+def get_matched_products_optimized(offset: int = 0, limit: int = 100) -> Tuple[List[JDSProduct], int]:
+    """
+    Get matched JDS products with pagination and caching
+    
+    Args:
+        offset: Number of records to skip
+        limit: Maximum number of records to return
+        
+    Returns:
+        Tuple of (products_list, total_count)
+    """
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Get total count first
+        cursor.execute('SELECT COUNT(*) FROM jds_products')
+        total_count = cursor.fetchone()[0]
+        
+        # Get Shopify SKUs for comparison (cached)
+        shopify_skus = get_shopify_skus_cached()
+        
+        # Get JDS products with pagination
+        cursor.execute('''
+            SELECT * FROM jds_products 
+            ORDER BY last_updated DESC 
+            LIMIT ? OFFSET ?
+        ''', (limit, offset))
+        
+        jds_rows = cursor.fetchall()
+        matched_products = []
+        
+        for row in jds_rows:
+            jds_product = JDSProduct(**dict(row))
+            cleaned_jds_sku = clean_sku_for_comparison(jds_product.sku)
+            
+            # Check if this JDS product exists in Shopify (using cleaned SKUs)
+            if cleaned_jds_sku in shopify_skus:
+                matched_products.append(jds_product)
+        
+        conn.close()
+        
+        # Record performance metrics
+        record_metric("matched_products_count", len(matched_products))
+        record_metric("matched_products_total", total_count)
+        
+        return matched_products, total_count
+        
+    except Exception as e:
+        logger.error(f"Error getting matched products (optimized): {e}")
+        record_metric("database_error_count", 1, {"function": "get_matched_products_optimized"})
+        return [], 0
+
+@cached(ttl=300, key_func=lambda: cache_key_for_comparison_stats())
+@time_function("get_sku_comparison_stats_optimized")
+def get_sku_comparison_stats_optimized() -> Dict[str, Any]:
+    """Get SKU comparison statistics with caching"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Get counts using optimized queries
+        cursor.execute('SELECT COUNT(*) FROM jds_products')
+        jds_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM shopify_products')
+        shopify_count = cursor.fetchone()[0]
+        
+        # Get unmatched count using optimized query
+        shopify_skus = get_shopify_skus_cached()
+        cursor.execute('SELECT sku FROM jds_products')
+        jds_skus = [row[0] for row in cursor.fetchall()]
+        
+        unmatched_count = 0
+        for sku in jds_skus:
+            cleaned_sku = clean_sku_for_comparison(sku)
+            if cleaned_sku not in shopify_skus:
+                unmatched_count += 1
+        
+        matched_count = jds_count - unmatched_count
+        
+        conn.close()
+        
+        stats = {
+            'jds_total': jds_count,
+            'shopify_total': shopify_count,
+            'matched': matched_count,
+            'unmatched': unmatched_count,
+            'match_percentage': (matched_count / jds_count * 100) if jds_count > 0 else 0
+        }
+        
+        # Record performance metrics
+        record_metric("comparison_stats_calculated", 1)
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting SKU comparison stats (optimized): {e}")
+        record_metric("database_error_count", 1, {"function": "get_sku_comparison_stats_optimized"})
+        return {
+            'jds_total': 0,
+            'shopify_total': 0,
+            'matched': 0,
+            'unmatched': 0,
+            'match_percentage': 0
+        }
+
+@cached(ttl=600)  # Cache for 10 minutes
+def get_shopify_skus_cached() -> set:
+    """Get Shopify SKUs with caching"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT sku FROM shopify_products WHERE sku IS NOT NULL AND sku != ""')
+        rows = cursor.fetchall()
+        shopify_skus = {clean_sku_for_comparison(row[0]) for row in rows}
+        
+        conn.close()
+        
+        record_metric("shopify_skus_cached", len(shopify_skus))
+        return shopify_skus
+        
+    except Exception as e:
+        logger.error(f"Error getting Shopify SKUs (cached): {e}")
+        return set()
+
+@time_function("get_products_with_pricing_optimized")
+def get_products_with_pricing_optimized(products: List[JDSProduct], 
+                                      pricing_func: callable) -> List[Dict[str, Any]]:
+    """
+    Get products with calculated pricing (optimized version)
+    
+    Args:
+        products: List of JDS products
+        pricing_func: Function to calculate pricing
+        
+    Returns:
+        List of products with pricing information
+    """
+    try:
+        products_with_pricing = []
+        
+        for product in products:
+            product_dict = product.to_dict()
+            
+            # Calculate pricing
+            pricing_validation = pricing_func(product_dict)
+            product_dict['calculated_prices'] = pricing_validation['calculated_prices']
+            product_dict['recommended_price'] = pricing_validation['recommended_price']
+            product_dict['pricing_valid'] = pricing_validation['is_valid']
+            product_dict['pricing_warnings'] = pricing_validation['warnings']
+            product_dict['pricing_errors'] = pricing_validation['errors']
+            
+            products_with_pricing.append(product_dict)
+        
+        # Record performance metrics
+        record_metric("products_with_pricing_processed", len(products_with_pricing))
+        
+        return products_with_pricing
+        
+    except Exception as e:
+        logger.error(f"Error getting products with pricing (optimized): {e}")
+        record_metric("database_error_count", 1, {"function": "get_products_with_pricing_optimized"})
+        return []
+
+def optimize_database() -> Dict[str, Any]:
+    """Optimize database performance"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Analyze tables for query optimization
+        cursor.execute('ANALYZE')
+        
+        # Get database statistics
+        cursor.execute('PRAGMA table_info(jds_products)')
+        jds_columns = cursor.fetchall()
+        
+        cursor.execute('PRAGMA table_info(shopify_products)')
+        shopify_columns = cursor.fetchall()
+        
+        # Check index usage
+        cursor.execute('PRAGMA index_list(jds_products)')
+        jds_indexes = cursor.fetchall()
+        
+        cursor.execute('PRAGMA index_list(shopify_products)')
+        shopify_indexes = cursor.fetchall()
+        
+        conn.close()
+        
+        optimization_info = {
+            'analyzed': True,
+            'jds_columns': len(jds_columns),
+            'shopify_columns': len(shopify_columns),
+            'jds_indexes': len(jds_indexes),
+            'shopify_indexes': len(shopify_indexes),
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        
+        record_metric("database_optimized", 1)
+        
+        return optimization_info
+        
+    except Exception as e:
+        logger.error(f"Error optimizing database: {e}")
+        record_metric("database_error_count", 1, {"function": "optimize_database"})
+        return {'error': str(e)}
+
+def get_database_stats() -> Dict[str, Any]:
+    """Get database statistics"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Get table sizes
+        cursor.execute('SELECT COUNT(*) FROM jds_products')
+        jds_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM shopify_products')
+        shopify_count = cursor.fetchone()[0]
+        
+        # Get database file size
+        db_size = os.path.getsize(db.db_path) if os.path.exists(db.db_path) else 0
+        
+        # Get cache stats
+        cache_stats = cache_manager.get_stats()
+        
+        conn.close()
+        
+        stats = {
+            'jds_products': jds_count,
+            'shopify_products': shopify_count,
+            'total_products': jds_count + shopify_count,
+            'database_size_bytes': db_size,
+            'database_size_mb': round(db_size / (1024 * 1024), 2),
+            'cache_stats': cache_stats,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting database stats: {e}")
+        return {'error': str(e)}
