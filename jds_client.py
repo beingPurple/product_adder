@@ -125,14 +125,11 @@ class JDSClient:
             # Ensure environment variables are loaded
             load_dotenv()
             
-            conn = db.connect()
-            cursor = conn.cursor()
-            
-            # Get all SKUs from Shopify
-            cursor.execute('SELECT sku FROM shopify_products')
-            all_skus = [row[0] for row in cursor.fetchall()]
-            
-            conn.close()
+            with db.connect() as conn:
+                with conn.cursor() as cursor:
+                    # Get all SKUs from Shopify
+                    cursor.execute('SELECT sku FROM shopify_products')
+                    all_skus = [row[0] for row in cursor.fetchall()]
             
             logger.info(f"Found {len(all_skus)} total SKUs in Shopify store")
             return all_skus
@@ -206,31 +203,32 @@ class JDSClient:
     
     def _save_product_to_db(self, product_data: Dict[str, Any]) -> None:
         """Save a single product to the database"""
+        sku = product_data.get('sku', '')
+        if not sku:
+            raise ValueError("Product SKU is required")
+        
         try:
-            sku = product_data.get('sku', '')
-            if not sku:
-                raise ValueError("Product SKU is required")
-            
-            # Check if product already exists
-            conn = db.connect()
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM jds_products WHERE sku = ?', (sku,))
-            existing_row = cursor.fetchone()
-            
-            if existing_row:
-                # Update existing product
-                existing_product = JDSProduct(**dict(existing_row))
-                self._update_product_from_data(existing_product, product_data)
-                existing_product.save(db)
-            else:
-                # Create new product
-                new_product = self._create_product_from_data(product_data)
-                new_product.save(db)
-            
-            conn.close()
-            
+            with db.connect() as conn:
+                with conn.cursor() as cursor:
+                    # Check if product already exists
+                    cursor.execute('SELECT * FROM jds_products WHERE sku = ?', (sku,))
+                    existing_row = cursor.fetchone()
+                    
+                    if existing_row:
+                        # Convert tuple to dict using column names
+                        cols = [c[0] for c in cursor.description]
+                        row_dict = dict(zip(cols, existing_row))
+                        
+                        # Update existing product
+                        existing_product = JDSProduct(**row_dict)
+                        self._update_product_from_data(existing_product, product_data)
+                        existing_product.save(db)
+                    else:
+                        # Create new product
+                        new_product = self._create_product_from_data(product_data)
+                        new_product.save(db)
         except Exception as e:
-            conn.close()
+            logger.error(f"Error saving product {sku} to database: {e}")
             raise e
     
     def _create_product_from_data(self, data: Dict[str, Any]) -> JDSProduct:
@@ -273,12 +271,11 @@ class JDSClient:
     def get_products_count(self) -> int:
         """Get count of products in database"""
         try:
-            conn = db.connect()
-            cursor = conn.cursor()
-            cursor.execute('SELECT COUNT(*) FROM jds_products')
-            count = cursor.fetchone()[0]
-            conn.close()
-            return count
+            with db.connect() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute('SELECT COUNT(*) FROM jds_products')
+                    count = cursor.fetchone()[0]
+                    return count
         except Exception as e:
             logger.error(f"Error getting JDS products count: {e}")
             return 0

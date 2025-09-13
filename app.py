@@ -5,6 +5,7 @@ Implements pricing calculator, SKU comparison, and data synchronization
 """
 
 from flask import Flask, jsonify, render_template, request
+from flask_wtf.csrf import CSRFProtect
 import os
 import sys
 import logging
@@ -15,16 +16,45 @@ from data_sync import sync_all_data, get_unmatched_products_with_pricing, get_sy
 from pricing_calculator import pricing_calculator
 from jds_client import JDSClient
 from shopify_client import ShopifyClient
+#!/usr/bin/env python3
+"""
+Product Adder Flask Application - Phase 2
+Implements pricing calculator, SKU comparison, and data synchronization
+"""
 
-# Load environment variables from .env file
+from dotenv import load_dotenv
+# Load environment variables first, before other imports
+load_dotenv()
+
+from flask import Flask, jsonify, render_template, request
+import os
+import sys
+import logging
+from datetime import datetime
+from database import init_db, get_sku_comparison_stats, get_unmatched_products, get_matched_products
+from data_sync import sync_all_data, get_unmatched_products_with_pricing, get_sync_status
+from pricing_calculator import pricing_calculator
+from jds_client import JDSClient
+from shopify_client import ShopifyClient
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        logging.FileHandler('app.log')  # File output
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Create Flask app
 app = Flask(__name__)
+
+# Configure CSRF protection
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+csrf = CSRFProtect(app)
 
 @app.route('/')
 def index():
@@ -99,8 +129,26 @@ def info():
         ]
     })
 
-# Phase 2 API Routes
+from data_sync import sync_all_data, get_unmatched_products_with_pricing, get_sync_status
+from data_sync import sync_manager
+from pricing_calculator import pricing_calculator
 
+...
+
+@app.route('/api/sync/jds', methods=['POST'])
+def sync_jds():
+    """Sync JDS data with specific SKUs or sample SKUs"""
+    try:
+        data = request.json if request.is_json else {}
+        skus = data.get('skus', None)  # If no SKUs provided, will use sample SKUs
+
+        result = sync_manager.sync_jds_data(skus)
+
+@app.route('/api/sync/shopify', methods=['POST'])
+def sync_shopify():
+    """Sync Shopify data"""
+    try:
+        result = sync_manager.sync_shopify_data()
 @app.route('/api/sync/status')
 def sync_status():
     """Get current sync status and statistics"""
@@ -205,26 +253,26 @@ def matched_products_with_pricing():
             # Debug: Log the product data types
             logger.info(f"Product data types: {[(k, type(v)) for k, v in product_dict.items() if 'price' in k.lower()]}")
             
+            # Convert all price-related fields to float to handle string inputs from database
+            price_fields = ['less_than_case_price', 'current_shopify_price', 'calculated_shopify_price', 
+                          'price_difference', 'price_difference_percent']
+            
+            for field in price_fields:
+                if field in product_dict:
+                    try:
+                        product_dict[field] = float(product_dict[field]) if product_dict[field] is not None else 0.0
+                    except (ValueError, TypeError):
+                        product_dict[field] = 0.0
+            
             # Calculate what the Shopify price should be
             pricing_validation = pricing_calculator.validate_pricing_data(product_dict)
             product_dict['calculated_shopify_price'] = pricing_validation['recommended_price']
             product_dict['pricing_valid'] = pricing_validation['is_valid']
             product_dict['pricing_warnings'] = pricing_validation['warnings']
             
-            # Calculate price difference
+            # Calculate price difference (values are already converted to float above)
             current_price = product_dict.get('current_shopify_price', 0)
             calculated_price = product_dict.get('calculated_shopify_price', 0)
-            
-            # Convert to float to handle string inputs from database
-            try:
-                current_price = float(current_price) if current_price is not None else 0.0
-            except (ValueError, TypeError):
-                current_price = 0.0
-                
-            try:
-                calculated_price = float(calculated_price) if calculated_price is not None else 0.0
-            except (ValueError, TypeError):
-                calculated_price = 0.0
             
             if current_price and calculated_price:
                 price_diff = calculated_price - current_price
@@ -232,8 +280,8 @@ def matched_products_with_pricing():
                 product_dict['price_difference'] = price_diff
                 product_dict['price_difference_percent'] = price_diff_percent
             else:
-                product_dict['price_difference'] = 0
-                product_dict['price_difference_percent'] = 0
+                product_dict['price_difference'] = 0.0
+                product_dict['price_difference_percent'] = 0.0
             
             products_with_pricing.append(product_dict)
         

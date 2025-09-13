@@ -519,11 +519,11 @@ function createProductCard(product) {
                         <div class="price-grid">
                             <div class="price-item">
                                 <div class="price-label">JDS Price</div>
-                                <div class="price-value">$${(product.less_than_case_price || 0).toFixed(2)}</div>
+                                <div class="price-value">$${(parseFloat(product.less_than_case_price) || 0).toFixed(2)}</div>
                             </div>
                             <div class="price-item recommended-price">
                                 <div class="price-label">Recommended</div>
-                                <div class="price-value">$${(product.recommended_price || 0).toFixed(2)}</div>
+                                <div class="price-value">$${(parseFloat(product.recommended_price) || 0).toFixed(2)}</div>
                             </div>
                             <div class="price-item">
                                 <div class="price-label">Case Qty</div>

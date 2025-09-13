@@ -362,6 +362,7 @@ async function loadProducts() {
             showError('Failed to load products: ' + data.error);
         }
     } catch (error) {
+        console.error('Error loading products:', error);
         showError('Error loading products: ' + error.message);
     }
 }
@@ -374,24 +375,27 @@ function filterProducts() {
     
     filteredProducts = allProducts.filter(product => {
         // Search filter
+        const name = String(product.name || '');
+        const sku = String(product.sku || '');
         const matchesSearch = !searchTerm || 
-            product.name.toLowerCase().includes(searchTerm) ||
-            product.sku.toLowerCase().includes(searchTerm) ||
+            name.toLowerCase().includes(searchTerm) ||
+            sku.toLowerCase().includes(searchTerm) ||
             (product.description && product.description.toLowerCase().includes(searchTerm));
         
         // Pricing status filter
         let matchesPricing = true;
         if (pricingFilter) {
-            const diffPercent = Math.abs(product.price_difference_percent || 0);
+            const diffPercent = Math.abs(safeNumber(product.price_difference_percent));
+            const priceDiff = safeNumber(product.price_difference);
             switch (pricingFilter) {
                 case 'accurate':
                     matchesPricing = diffPercent <= 5;
                     break;
                 case 'underpriced':
-                    matchesPricing = (product.price_difference || 0) > 0 && diffPercent > 5;
+                    matchesPricing = priceDiff > 0 && diffPercent > 5;
                     break;
                 case 'overpriced':
-                    matchesPricing = (product.price_difference || 0) < 0 && diffPercent > 5;
+                    matchesPricing = priceDiff < 0 && diffPercent > 5;
                     break;
             }
         }
@@ -399,7 +403,7 @@ function filterProducts() {
         // Price difference filter
         let matchesDifference = true;
         if (differenceFilter) {
-            const diffPercent = Math.abs(product.price_difference_percent || 0);
+            const diffPercent = Math.abs(safeNumber(product.price_difference_percent));
             switch (differenceFilter) {
                 case '0-5':
                     matchesDifference = diffPercent <= 5;
@@ -423,13 +427,17 @@ function filterProducts() {
     filteredProducts.sort((a, b) => {
         switch (sortBy) {
             case 'name':
-                return a.name.localeCompare(b.name);
+                const nameA = String(a.name || '');
+                const nameB = String(b.name || '');
+                return nameA.localeCompare(nameB);
             case 'difference':
-                return Math.abs(b.price_difference_percent || 0) - Math.abs(a.price_difference_percent || 0);
+                return Math.abs(safeNumber(b.price_difference_percent)) - Math.abs(safeNumber(a.price_difference_percent));
             case 'current_price':
-                return (b.current_shopify_price || 0) - (a.current_shopify_price || 0);
+                return safeNumber(b.current_shopify_price) - safeNumber(a.current_shopify_price);
             case 'sku':
-                return a.sku.localeCompare(b.sku);
+                const skuA = String(a.sku || '');
+                const skuB = String(b.sku || '');
+                return skuA.localeCompare(skuB);
             default:
                 return 0;
         }
@@ -452,15 +460,108 @@ function displayProducts() {
         return;
     }
     
-    container.innerHTML = filteredProducts.map(product => createProductCard(product)).join('');
+    try {
+        container.innerHTML = filteredProducts.map(product => {
+            try {
+                return createProductCard(product);
+            } catch (error) {
+                console.error('Error creating product card for:', product.sku, error);
+                return createErrorCard(product.sku, error.message).outerHTML;
+            }
+        }).join('');
+    } catch (error) {
+        console.error('Error displaying products:', error);
+        container.innerHTML = '';
+        container.appendChild(createErrorAlert(error.message));
+    }
+}
+
+// Helper function to safely convert to number
+function safeNumber(value, defaultValue = 0) {
+    const parsed = parseFloat(value);
+    return isNaN(parsed) ? defaultValue : parsed;
+}
+
+// Helper function to escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Helper function to sanitize URLs to prevent attribute injection
+function sanitizeUrl(url) {
+    if (!url || typeof url !== 'string') {
+        return '/static/images/placeholder.svg';
+    }
+    
+    try {
+        // Parse the URL to validate scheme
+        const parsedUrl = new URL(url);
+        
+        // Whitelist allowed schemes
+        const allowedSchemes = ['http:', 'https:', 'data:image/'];
+        const isAllowedScheme = allowedSchemes.some(scheme => 
+            parsedUrl.protocol === scheme || parsedUrl.protocol.startsWith(scheme)
+        );
+        
+        if (!isAllowedScheme) {
+            return '/static/images/placeholder.svg';
+        }
+        
+        // Normalize and encode dangerous characters
+        const normalizedUrl = parsedUrl.toString();
+        
+        // Check for dangerous characters that could break out of attributes
+        const dangerousChars = /["'<>]/;
+        if (dangerousChars.test(normalizedUrl)) {
+            return '/static/images/placeholder.svg';
+        }
+        
+        return normalizedUrl;
+    } catch (error) {
+        // If URL parsing fails, return placeholder
+        return '/static/images/placeholder.svg';
+    }
+}
+
+// Helper function to create safe error card
+function createErrorCard(sku, errorMessage) {
+    const card = document.createElement('div');
+    card.className = 'product-card';
+    
+    const paragraph = document.createElement('p');
+    paragraph.textContent = `Error displaying product ${sku}: ${errorMessage}`;
+    
+    card.appendChild(paragraph);
+    return card;
+}
+
+// Helper function to create safe error alert
+function createErrorAlert(errorMessage) {
+    const alert = document.createElement('div');
+    alert.className = 'alert alert-danger';
+    alert.textContent = `Error displaying products: ${errorMessage}`;
+    return alert;
+}
+
+// Helper function to safely call toFixed
+function safeToFixed(value, decimals = 2) {
+    const num = safeNumber(value);
+    return num.toFixed(decimals);
 }
 
 function createProductCard(product) {
-    const imageUrl = product.image_url || product.thumbnail_url || product.quick_image_url || '/static/images/placeholder.svg';
-    const currentPrice = product.current_shopify_price || 0;
-    const calculatedPrice = product.calculated_shopify_price || 0;
-    const priceDiff = product.price_difference || 0;
-    const priceDiffPercent = product.price_difference_percent || 0;
+    try {
+        const rawImageUrl = product.image_url || product.thumbnail_url || product.quick_image_url || '/static/images/placeholder.svg';
+        const sanitizedUrl = sanitizeUrl(rawImageUrl);
+        
+        // Safely convert to numbers, handling null/undefined/string values
+        const currentPrice = safeNumber(product.current_shopify_price);
+        const calculatedPrice = safeNumber(product.calculated_shopify_price);
+        const priceDiff = safeNumber(product.price_difference);
+        const priceDiffPercent = safeNumber(product.price_difference_percent);
+        const lessThanCasePrice = safeNumber(product.less_than_case_price);
     
     // Determine pricing status
     let pricingStatus = 'accurate';
@@ -490,7 +591,7 @@ function createProductCard(product) {
             </div>
             
             <div class="product-content">
-                <img src="${imageUrl}" alt="${escapeHtml(product.name || 'Product')}" 
+                <img src="${sanitizedUrl}" alt="${escapeHtml(product.name || 'Product')}" 
                      class="product-image" onerror="this.src='/static/images/placeholder.svg'">
                 
                 <div class="product-details">
@@ -501,22 +602,22 @@ function createProductCard(product) {
                         <div class="price-comparison-grid">
                             <div class="price-comparison-item current">
                                 <div class="price-label">Current Shopify Price</div>
-                                <div class="price-value">$${currentPrice.toFixed(2)}</div>
+                                <div class="price-value">$${safeToFixed(currentPrice, 2)}</div>
                             </div>
                             <div class="price-comparison-item recommended">
                                 <div class="price-label">Recommended Price</div>
-                                <div class="price-value">$${calculatedPrice.toFixed(2)}</div>
+                                <div class="price-value">$${safeToFixed(calculatedPrice, 2)}</div>
                             </div>
                             <div class="price-comparison-item">
                                 <div class="price-label">Difference</div>
-                                <div class="price-value">$${Math.abs(priceDiff).toFixed(2)}</div>
+                                <div class="price-value">$${safeToFixed(Math.abs(safeNumber(priceDiff)), 2)}</div>
                                 <div class="price-difference ${priceDiff > 0 ? 'positive' : priceDiff < 0 ? 'negative' : 'neutral'}">
-                                    ${priceDiff > 0 ? '+' : ''}${priceDiffPercent.toFixed(1)}%
+                                    ${priceDiff > 0 ? '+' : ''}${safeToFixed(priceDiffPercent, 1)}%
                                 </div>
                             </div>
                             <div class="price-comparison-item">
                                 <div class="price-label">JDS Base Price</div>
-                                <div class="price-value">$${(product.less_than_case_price || 0).toFixed(2)}</div>
+                                <div class="price-value">$${safeToFixed(lessThanCasePrice, 2)}</div>
                             </div>
                         </div>
                     </div>
@@ -530,6 +631,10 @@ function createProductCard(product) {
             </div>
         </div>
     `;
+    } catch (error) {
+        console.error('Error creating product card for', product.sku, ':', error);
+        return createErrorCard(product.sku, error.message).outerHTML;
+    }
 }
 
 function updateStats() {
@@ -539,8 +644,8 @@ function updateStats() {
     let accurate = 0, underpriced = 0, overpriced = 0;
     
     filteredProducts.forEach(product => {
-        const diffPercent = Math.abs(product.price_difference_percent || 0);
-        const priceDiff = product.price_difference || 0;
+        const diffPercent = Math.abs(safeNumber(product.price_difference_percent));
+        const priceDiff = safeNumber(product.price_difference);
         
         if (diffPercent <= 5) {
             accurate++;

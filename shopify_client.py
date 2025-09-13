@@ -18,8 +18,16 @@ class ShopifyClient:
         self.store = os.getenv('SHOPIFY_STORE')
         self.api_version = os.getenv('SHOPIFY_API_VERSION', '2023-10')
         # Force a compatible API version if the one in env is too new
-        if self.api_version and self.api_version > '2024-01':
-            self.api_version = '2023-10'
+        if self.api_version:
+            # Parse version string (format: YYYY-MM)
+            try:
+                year, month = map(int, self.api_version.split('-'))
+                if year > 2024 or (year == 2024 and month > 1):
+                    self.api_version = '2023-10'
+            except (ValueError, AttributeError):
+                # If parsing fails, default to safe version
+                logger.warning(f"Invalid API version format: {self.api_version}, using default")
+                self.api_version = '2023-10'
         self.access_token = os.getenv('SHOPIFY_ACCESS_TOKEN')
         
         if not self.store or not self.access_token:
@@ -210,26 +218,39 @@ class ShopifyClient:
                 raise ValueError("Product SKU is required")
             
             # Check if product already exists
-            conn = db.connect()
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM shopify_products WHERE sku = ?', (sku,))
-            existing_row = cursor.fetchone()
-            
-            if existing_row:
-                # Update existing product
-                existing_product = ShopifyProduct(**dict(existing_row))
-                self._update_product_from_data(existing_product, product_data)
-                existing_product.save(db)
-            else:
-                # Create new product
-                new_product = self._create_product_from_data(product_data)
-                new_product.save(db)
-            
-            conn.close()
-            
-        except Exception as e:
-            conn.close()
-            raise e
+        def _save_product_to_db(self, product_data: Dict[str, Any]) -> None:
+            """Save a single product to the database"""
+            conn = None
+            try:
+                sku = product_data.get('sku', '')
+                if not sku:
+                    raise ValueError("Product SKU is required")
+                
+                # Check if product already exists
+                conn = db.connect()
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM shopify_products WHERE sku = ?', (sku,))
+                existing_row = cursor.fetchone()
+                
+                if existing_row:
+                    # Update existing product
+                    # Convert Row to dict properly
+                    columns = [description[0] for description in cursor.description]
+                    existing_dict = dict(zip(columns, existing_row))
+                    existing_product = ShopifyProduct(**existing_dict)
+                    self._update_product_from_data(existing_product, product_data)
+                    existing_product.save(db)
+                else:
+                    # Create new product
+                    new_product = self._create_product_from_data(product_data)
+                    new_product.save(db)
+                
+                conn.close()
+                
+            except Exception as e:
+                if conn:
+                    conn.close()
+                raise e
     
     def _create_product_from_data(self, data: Dict[str, Any]) -> ShopifyProduct:
         """Create a new ShopifyProduct from API data"""
@@ -251,12 +272,21 @@ class ShopifyClient:
     def get_products_count(self) -> int:
         """Get count of products in database"""
         try:
-            conn = db.connect()
-            cursor = conn.cursor()
-            cursor.execute('SELECT COUNT(*) FROM shopify_products')
-            count = cursor.fetchone()[0]
-            conn.close()
-            return count
+        def get_products_count(self) -> int:
+            """Get count of products in database"""
+            conn = None
+            try:
+                conn = db.connect()
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM shopify_products')
+                count = cursor.fetchone()[0]
+                conn.close()
+                return count
+            except Exception as e:
+                logger.error(f"Error getting Shopify products count: {e}")
+                if conn:
+                    conn.close()
+                return 0
         except Exception as e:
             logger.error(f"Error getting Shopify products count: {e}")
             return 0
