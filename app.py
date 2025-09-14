@@ -97,10 +97,14 @@ def index():
         sync_status = get_sync_status()
         comparison_stats = get_sku_comparison_stats()
         
+        # Check if we're in Vercel environment and show appropriate warning
+        is_vercel = os.environ.get('VERCEL', False)
+        
         return render_template('index.html', 
                              sync_status=sync_status,
                              comparison_stats=comparison_stats,
-                             api_key=app.config['API_KEY'])
+                             api_key=app.config['API_KEY'],
+                             is_vercel=is_vercel)
     except Exception as e:
         logger.error(f"Error loading dashboard: {e}")
         return render_template('index.html', 
@@ -124,7 +128,17 @@ def new_products():
 def existing_products():
     """View products that exist in both JDS and Shopify"""
     try:
-        return render_template('existing_products.html')
+        # Check if database has any data, if not, trigger a sync
+        from database import get_database_stats
+        db_stats = get_database_stats()
+        
+        # If no products in database, show a message to sync first
+        if db_stats.get('total_products', 0) == 0:
+            return render_template('existing_products.html', 
+                                 sync_required=True, 
+                                 message="No products found. Please sync data first.")
+        
+        return render_template('existing_products.html', sync_required=False)
     except Exception as e:
         logger.error(f"Error loading existing products page: {e}")
         return f"Error loading existing products page: {e}", 500
@@ -561,8 +575,20 @@ def matched_products():
 def matched_products_with_pricing():
     """Get existing products with pricing analysis"""
     try:
-        from database import get_matched_products_with_shopify_prices
+        from database import get_matched_products_with_shopify_prices, get_database_stats
         from pricing_calculator import pricing_calculator
+        
+        # Check if database is empty and auto-sync if needed
+        db_stats = get_database_stats()
+        if db_stats.get('total_products', 0) == 0:
+            logger.info("Database is empty, triggering auto-sync...")
+            try:
+                # Trigger a background sync
+                from data_sync import sync_all_data
+                sync_result = sync_all_data(force=True)
+                logger.info(f"Auto-sync completed: {sync_result.get('message', 'Unknown result')}")
+            except Exception as sync_error:
+                logger.warning(f"Auto-sync failed: {sync_error}")
         
         matched_products = get_matched_products_with_shopify_prices()
         products_with_pricing = []
@@ -1031,10 +1057,53 @@ def debug_unmatched():
         logger.error(f"Debug error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/debug/database-state')
+@require_api_key
+def debug_database_state():
+    """Debug endpoint to check database state and Vercel environment"""
+    try:
+        from database import get_database_stats, db
+        import os
+        
+        db_stats = get_database_stats()
+        db_path = db.db_path
+        db_exists = os.path.exists(db_path)
+        db_size = os.path.getsize(db_path) if db_exists else 0
+        
+        return jsonify({
+            'vercel_environment': bool(os.environ.get('VERCEL')),
+            'database_path': db_path,
+            'database_exists': db_exists,
+            'database_size_bytes': db_size,
+            'database_stats': db_stats,
+            'environment_vars': {
+                'SHOPIFY_STORE': bool(os.environ.get('SHOPIFY_STORE')),
+                'SHOPIFY_ACCESS_TOKEN': bool(os.environ.get('SHOPIFY_ACCESS_TOKEN')),
+                'EXTERNAL_API_TOKEN': bool(os.environ.get('EXTERNAL_API_TOKEN')),
+            }
+        })
+    except Exception as e:
+        logger.error(f"Debug database state error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # Initialize database on startup (for Vercel)
 try:
     init_db()
     logger.info("Database initialized successfully")
+    
+    # Check if we're in Vercel and database is empty, trigger auto-sync
+    if os.environ.get('VERCEL'):
+        from database import get_database_stats
+        db_stats = get_database_stats()
+        if db_stats.get('total_products', 0) == 0:
+            logger.info("Vercel environment detected with empty database, triggering auto-sync...")
+            try:
+                from data_sync import sync_all_data
+                sync_result = sync_all_data(force=True)
+                logger.info(f"Auto-sync completed: {sync_result.get('message', 'Unknown result')}")
+            except Exception as sync_error:
+                logger.warning(f"Auto-sync failed: {sync_error}")
+        
 except Exception as e:
     logger.warning(f"Database initialization warning: {e}")
 

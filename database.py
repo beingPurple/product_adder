@@ -18,7 +18,11 @@ class SimpleDB:
         if db_path is None:
             # For Vercel serverless environment, use /tmp directory
             if os.environ.get('VERCEL'):
-                self.db_path = "/tmp/product_adder.db"
+                # Try to use a more persistent location if available
+                import tempfile
+                temp_dir = tempfile.gettempdir()
+                self.db_path = os.path.join(temp_dir, "product_adder.db")
+                logger.info(f"Using database path for Vercel: {self.db_path}")
             else:
                 self.db_path = "product_adder.db"
         else:
