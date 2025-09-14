@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Load environment variables first, before other imports
 load_dotenv()
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, redirect, url_for
 import os
 import sys
 import logging
@@ -52,6 +52,7 @@ app = Flask(__name__)
 # Configure app
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['API_KEY'] = os.environ.get('APP_API_KEY', 'dev-api-key')  # Allow default for testing
+app.config['SHOPIFY_API_KEY'] = os.environ.get('SHOPIFY_API_KEY', '')  # For App Bridge
 
 # Simple header-based API key gate for internal/admin APIs
 from functools import wraps
@@ -72,6 +73,22 @@ def require_api_key(fn):
 def favicon():
     """Serve favicon"""
     return app.send_static_file('images/placeholder.svg')
+
+@app.route('/auth/callback')
+def shopify_auth_callback():
+    """Handle Shopify OAuth callback"""
+    try:
+        # Get the shop parameter
+        shop = request.args.get('shop')
+        if not shop:
+            return "Missing shop parameter", 400
+        
+        # In a real app, you'd validate the HMAC and exchange the code for an access token
+        # For now, we'll just redirect to the main app
+        return redirect(url_for('index', shop=shop))
+    except Exception as e:
+        logger.error(f"OAuth callback error: {e}")
+        return f"Authentication error: {e}", 500
 
 @app.route('/')
 def index():
@@ -1086,23 +1103,22 @@ def debug_database_state():
         logger.error(f"Debug database state error: {e}")
         return jsonify({'error': str(e)}), 500
 
-# Initialize database on startup (for Vercel)
+# Initialize database on startup
 try:
     init_db()
     logger.info("Database initialized successfully")
     
-    # Check if we're in Vercel and database is empty, trigger auto-sync
-    if os.environ.get('VERCEL'):
-        from database import get_database_stats
-        db_stats = get_database_stats()
-        if db_stats.get('total_products', 0) == 0:
-            logger.info("Vercel environment detected with empty database, triggering auto-sync...")
-            try:
-                from data_sync import sync_all_data
-                sync_result = sync_all_data(force=True)
-                logger.info(f"Auto-sync completed: {sync_result.get('message', 'Unknown result')}")
-            except Exception as sync_error:
-                logger.warning(f"Auto-sync failed: {sync_error}")
+    # Auto-refresh product data on application reload
+    logger.info("Starting automatic product data refresh...")
+    try:
+        from data_sync import sync_all_data
+        sync_result = sync_all_data(force=True)
+        if sync_result.get('success', False):
+            logger.info(f"Auto-refresh completed successfully: {sync_result.get('message', 'Unknown result')}")
+        else:
+            logger.warning(f"Auto-refresh completed with issues: {sync_result.get('message', 'Unknown result')}")
+    except Exception as sync_error:
+        logger.warning(f"Auto-refresh failed: {sync_error}")
         
 except Exception as e:
     logger.warning(f"Database initialization warning: {e}")

@@ -10,6 +10,10 @@
     <!-- Custom CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     
+    <!-- Shopify App Bridge -->
+    <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
+    <script src="https://unpkg.com/@shopify/app-bridge-utils@3"></script>
+    
     {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -63,6 +67,54 @@
 
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Shopify App Bridge Initialization -->
+    <script>
+        // Initialize Shopify App Bridge if we're in a Shopify admin context
+        if (window.location !== window.parent.location) {
+            // We're in an iframe (Shopify admin)
+            const app = window['app-bridge'];
+            const createApp = app.default;
+            const { TitleBar, NavigationMenu } = app.actions;
+            
+            // Get shop domain from URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const shop = urlParams.get('shop');
+            const host = urlParams.get('host');
+            
+            if (shop && host) {
+                const appBridge = createApp({
+                    apiKey: '{{ app.config.get("SHOPIFY_API_KEY", "") }}',
+                    host: host,
+                    forceRedirect: true
+                });
+                
+                // Set up title bar
+                const titleBar = TitleBar.create(appBridge, {
+                    title: 'Product Adder - JDS Catalog Manager'
+                });
+                
+                // Set up navigation menu
+                const navigationMenu = NavigationMenu.create(appBridge, {
+                    items: [
+                        {
+                            label: 'Dashboard',
+                            destination: '/?shop=' + shop + '&host=' + host
+                        },
+                        {
+                            label: 'New Products',
+                            destination: '/products/new?shop=' + shop + '&host=' + host
+                        },
+                        {
+                            label: 'Existing Products',
+                            destination: '/products/existing?shop=' + shop + '&host=' + host
+                        }
+                    ]
+                });
+            }
+        }
+    </script>
+    
     <!-- Custom JS -->
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     
