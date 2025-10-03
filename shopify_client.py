@@ -7,6 +7,7 @@ import os
 import requests
 import logging
 import time
+import re
 from typing import List, Dict, Any, Optional
 from database import db, ShopifyProduct
 
@@ -161,6 +162,110 @@ class ShopifyClient:
         all_products = self.fetch_all_products()
         return [p for p in all_products if p['sku'] in skus]
     
+    def check_product_exists_by_sku(self, sku: str) -> Dict[str, Any]:
+        """
+        Check if a specific product exists in Shopify by SKU
+        
+        Args:
+            sku: SKU to check
+            
+        Returns:
+            Dictionary with existence status and product data if found
+        """
+        if not sku or not self.store or not self.access_token:
+            return {
+                'exists': False,
+                'product': None,
+                'error': 'Invalid SKU or missing credentials'
+            }
+        
+        try:
+            # Use GraphQL to search for products with specific SKU
+            query = """
+            query getProductBySku($query: String!) {
+                products(first: 1, query: $query) {
+                    edges {
+                        node {
+                            id
+                            title
+                            handle
+                            variants(first: 1) {
+                                edges {
+                                    node {
+                                        id
+                                        sku
+                                        price
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """
+            
+            # Search for products with the specific SKU
+            variables = {
+                "query": f"sku:{sku}"
+            }
+            
+            response = self.session.post(
+                self.base_url,
+                json={"query": query, "variables": variables},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if 'errors' in data:
+                    logger.error(f"GraphQL errors: {data['errors']}")
+                    return {
+                        'exists': False,
+                        'product': None,
+                        'error': f"GraphQL errors: {data['errors']}"
+                    }
+                
+                products = data.get('data', {}).get('products', {}).get('edges', [])
+                
+                if products:
+                    product_node = products[0]['node']
+                    variant = product_node['variants']['edges'][0]['node'] if product_node['variants']['edges'] else None
+                    
+                    if variant and variant['sku'] == sku:
+                        return {
+                            'exists': True,
+                            'product': {
+                                'id': product_node['id'],
+                                'title': product_node['title'],
+                                'handle': product_node['handle'],
+                                'sku': variant['sku'],
+                                'price': variant['price']
+                            },
+                            'error': None
+                        }
+                
+                return {
+                    'exists': False,
+                    'product': None,
+                    'error': None
+                }
+            else:
+                logger.error(f"HTTP error {response.status_code}: {response.text}")
+                return {
+                    'exists': False,
+                    'product': None,
+                    'error': f"HTTP error {response.status_code}"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error checking product existence for SKU {sku}: {e}")
+            return {
+                'exists': False,
+                'product': None,
+                'error': str(e)
+            }
+    
     def sync_products(self, skus: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Sync products from Shopify API to local database
@@ -195,6 +300,12 @@ class ShopifyClient:
                     error_msg = f"Error saving product {product_data.get('sku', 'unknown')}: {e}"
                     logger.error(error_msg)
                     errors.append(error_msg)
+            
+            # Clear cache after successful sync
+            if synced_count > 0:
+                from cache_manager import clear_cache
+                clear_cache()
+                logger.info(f"Cleared cache after syncing {synced_count} Shopify products")
             
             return {
                 'success': True,
@@ -464,35 +575,36 @@ class ShopifyClient:
         if len(title) > 255:  # Shopify title limit
             title = title[:252] + "..."
         
-        # Prepare description
+        # Prepare description with better formatting
         description = jds_product.get('description', '')
-        if not description:
+        if not description or description.strip() == '':
             description = f"Product SKU: {jds_product.get('sku', 'N/A')}"
+        else:
+            # Clean up description and ensure proper HTML formatting
+            description = description.strip()
+            # If description doesn't contain HTML tags, wrap in paragraph
+            if not any(tag in description for tag in ['<p>', '<div>', '<br>', '<ul>', '<ol>']):
+                description = f"<p>{description}</p>"
         
-        # Prepare images
-        images = []
-        image_urls = [
-            jds_product.get('image_url'),
-            jds_product.get('thumbnail_url'),
-            jds_product.get('quick_image_url')
-        ]
+        # Determine product type based on product name/description
+        product_type = self._determine_product_type(jds_product)
         
-        for url in image_urls:
-            if url and url.strip():
-                images.append({'src': url.strip()})
-                break  # Only use the first valid image
+        # Prepare images with enhanced processing
+        images = self._prepare_product_images(jds_product)
         
         # Create product data structure
         product_data = {
             'product': {
                 'title': title,
-                'body_html': f"<p>{description}</p>",
+                'body_html': description,
                 'vendor': 'JDS Wholesale',
-                'product_type': 'General',
+                'product_type': product_type,
+                'status': 'draft',  # Create products as drafts instead of active
                 'tags': ['JDS', 'Wholesale', jds_product.get('sku', '')],
                 'variants': [{
                     'sku': jds_product.get('sku', ''),
                     'price': str(calculated_price),
+                    'cost': str(jds_product.get('lessThanCasePrice', 0)),  # JDS base price as cost per item
                     'inventory_management': 'shopify',
                     'inventory_quantity': jds_product.get('available_quantity', 0),
                     'requires_shipping': True,
@@ -512,6 +624,356 @@ class ShopifyClient:
             product_data['product']['images'] = images
         
         return product_data
+    
+    def _prepare_product_images(self, jds_product: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Prepare product images with enhanced processing for Shopify media section
+        
+        Args:
+            jds_product: JDS product data dictionary
+            
+        Returns:
+            List of image dictionaries for Shopify API
+        """
+        images = []
+        product_name = jds_product.get('name', 'Product')
+        sku = jds_product.get('sku', '')
+        
+        # Get all available image URLs from JDS API
+        image_sources = [
+            {
+                'url': jds_product.get('image_url'),
+                'type': 'main',
+                'priority': 1
+            },
+            {
+                'url': jds_product.get('thumbnail_url'),
+                'type': 'thumbnail', 
+                'priority': 2
+            },
+            {
+                'url': jds_product.get('quick_image_url'),
+                'type': 'quick',
+                'priority': 3
+            }
+        ]
+        
+        # Filter and validate image URLs
+        valid_images = []
+        for img_source in image_sources:
+            url = img_source['url']
+            if url and url.strip() and self._is_valid_image_url(url):
+                valid_images.append({
+                    'url': url.strip(),
+                    'type': img_source['type'],
+                    'priority': img_source['priority']
+                })
+        
+        # Sort by priority (main image first)
+        valid_images.sort(key=lambda x: x['priority'])
+        
+        # Create Shopify image objects
+        for i, img_data in enumerate(valid_images):
+            # Optimize image URL for better performance
+            optimized_url = self._optimize_image_url(img_data['url'], img_data['type'])
+            
+            # Create alt text based on product name and image type
+            alt_text = self._generate_image_alt_text(product_name, img_data['type'], sku)
+            
+            image_obj = {
+                'src': optimized_url,
+                'alt': alt_text,
+                'position': i + 1  # Shopify uses 1-based positioning
+            }
+            
+            # Add additional metadata for better organization
+            if img_data['type'] == 'main':
+                image_obj['variant_ids'] = []  # Will be populated after variant creation
+            
+            # Add image metadata for better SEO and organization
+            image_obj['metafields'] = [
+                {
+                    'namespace': 'custom',
+                    'key': 'image_type',
+                    'value': img_data['type'],
+                    'type': 'single_line_text_field'
+                },
+                {
+                    'namespace': 'custom', 
+                    'key': 'image_priority',
+                    'value': str(img_data['priority']),
+                    'type': 'number_integer'
+                }
+            ]
+                
+            images.append(image_obj)
+        
+        # If no images found, add a placeholder
+        if not images:
+            logger.warning(f"No valid images found for product {sku}")
+            images.append({
+                'src': '/static/images/placeholder.svg',
+                'alt': f"{product_name} - No image available",
+                'position': 1
+            })
+        
+        logger.info(f"Prepared {len(images)} images for product {sku}")
+        return images
+    
+    def _optimize_image_url(self, url: str, image_type: str) -> str:
+        """
+        Optimize image URL for better performance and quality
+        
+        Args:
+            url: Original image URL
+            image_type: Type of image (main, thumbnail, quick)
+            
+        Returns:
+            Optimized image URL
+        """
+        if not url:
+            return url
+            
+        # For Cloudinary URLs, add optimization parameters
+        if 'cloudinary.com' in url.lower():
+            if image_type == 'main':
+                # High quality for main images
+                if 'q_auto' not in url:
+                    url = url.replace('/upload/', '/upload/q_auto,f_auto/')
+            elif image_type == 'thumbnail':
+                # Optimized for thumbnails
+                if 'w_300' not in url:
+                    url = url.replace('/upload/', '/upload/q_auto,w_300,h_300,c_fill/')
+            elif image_type == 'quick':
+                # Small size for quick view
+                if 'w_60' not in url:
+                    url = url.replace('/upload/', '/upload/q_auto,w_60,h_60,c_fill/')
+        
+        return url
+    
+    def update_product_images(self, product_id: str, images: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Update product images after product creation
+        
+        Args:
+            product_id: Shopify product ID
+            images: List of image objects to add
+            
+        Returns:
+            Dictionary with update results
+        """
+        if not self.store or not self.access_token:
+            return {
+                'success': False,
+                'error': 'Shopify credentials not configured'
+            }
+        
+        try:
+            # Update product with images
+            product_data = {
+                'product': {
+                    'id': product_id,
+                    'images': images
+                }
+            }
+            
+            response = self.session.put(
+                f"https://{self.store}/admin/api/{self.api_version}/products/{product_id}.json",
+                json=product_data,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                return {
+                    'success': True,
+                    'message': f'Successfully updated {len(images)} images for product {product_id}'
+                }
+            else:
+                error_data = response.json() if response.content else {}
+                return {
+                    'success': False,
+                    'error': f"Failed to update images: {error_data.get('errors', 'Unknown error')}"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error updating product images: {e}")
+            return {
+                'success': False,
+                'error': f"Error updating images: {str(e)}"
+            }
+    
+    def _is_valid_image_url(self, url: str) -> bool:
+        """
+        Validate if the URL is a valid image URL
+        
+        Args:
+            url: Image URL to validate
+            
+        Returns:
+            True if valid image URL, False otherwise
+        """
+        if not url or not url.strip():
+            return False
+            
+        # Check if URL starts with http/https
+        if not url.startswith(('http://', 'https://')):
+            return False
+            
+        # Check for common image file extensions
+        image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']
+        url_lower = url.lower()
+        
+        # Check if URL contains image extension or is from known image CDN
+        has_image_extension = any(ext in url_lower for ext in image_extensions)
+        is_known_cdn = any(cdn in url_lower for cdn in ['cloudinary.com', 'amazonaws.com', 'shopify.com'])
+        
+        return has_image_extension or is_known_cdn
+    
+    def _generate_image_alt_text(self, product_name: str, image_type: str, sku: str) -> str:
+        """
+        Generate descriptive alt text for product images
+        
+        Args:
+            product_name: Name of the product
+            image_type: Type of image (main, thumbnail, quick)
+            sku: Product SKU
+            
+        Returns:
+            Generated alt text
+        """
+        # Clean up product name for alt text
+        clean_name = product_name.replace('  ', ' ').strip()
+        
+        # Generate type-specific alt text
+        if image_type == 'main':
+            return f"{clean_name} - Main product image (SKU: {sku})"
+        elif image_type == 'thumbnail':
+            return f"{clean_name} - Thumbnail image (SKU: {sku})"
+        elif image_type == 'quick':
+            return f"{clean_name} - Quick view image (SKU: {sku})"
+        else:
+            return f"{clean_name} - Product image (SKU: {sku})"
+    
+    def _determine_product_type(self, jds_product: Dict[str, Any]) -> str:
+        """
+        Determine appropriate product type based on product name and description
+        Uses Shopify's standard product taxonomy
+        """
+        name = jds_product.get('name', '').lower()
+        description = jds_product.get('description', '').lower()
+        sku = jds_product.get('sku', '').lower()
+        
+        # Combine all text for analysis
+        text = f"{name} {description} {sku}"
+        
+        # Define category mappings based on keywords
+        category_mappings = {
+            # Apparel & Accessories
+            'apparel & accessories > clothing > shirts & tops': [
+                'shirt', 't-shirt', 'tee', 'top', 'blouse', 'polo', 'tank', 'camisole'
+            ],
+            'apparel & accessories > clothing > pants & shorts': [
+                'pants', 'shorts', 'jeans', 'trousers', 'capri', 'cargo'
+            ],
+            'apparel & accessories > clothing > outerwear': [
+                'jacket', 'coat', 'hoodie', 'sweatshirt', 'sweater', 'cardigan', 'blazer'
+            ],
+            'apparel & accessories > clothing > undergarments': [
+                'underwear', 'bra', 'panties', 'briefs', 'boxers', 'socks'
+            ],
+            'apparel & accessories > shoes': [
+                'shoes', 'sneakers', 'boots', 'sandals', 'heels', 'flats', 'athletic'
+            ],
+            'apparel & accessories > handbags, wallets & cases': [
+                'bag', 'purse', 'handbag', 'wallet', 'backpack', 'tote', 'clutch'
+            ],
+            'apparel & accessories > jewelry': [
+                'jewelry', 'necklace', 'bracelet', 'ring', 'earrings', 'watch'
+            ],
+            
+            # Home & Garden
+            'home & garden > kitchen & dining': [
+                'kitchen', 'dining', 'cookware', 'utensils', 'tumbler', 'cup', 'mug', 'glass',
+                'plate', 'bowl', 'cutlery', 'knife', 'spoon', 'fork', 'stemless', 'insulated',
+                'vacuum', 'drinkware', 'beverage'
+            ],
+            'home & garden > home decor': [
+                'decor', 'decoration', 'art', 'frame', 'candle', 'vase', 'lamp', 'mirror'
+            ],
+            'home & garden > furniture': [
+                'furniture', 'chair', 'table', 'desk', 'sofa', 'bed', 'shelf', 'cabinet'
+            ],
+            'home & garden > bedding': [
+                'bedding', 'sheet', 'pillow', 'blanket', 'comforter', 'duvet', 'mattress'
+            ],
+            'home & garden > bath': [
+                'bath', 'towel', 'soap', 'shampoo', 'bathroom', 'shower'
+            ],
+            
+            # Health & Beauty
+            'health & beauty > personal care': [
+                'personal care', 'hygiene', 'soap', 'shampoo', 'lotion', 'cream', 'deodorant'
+            ],
+            'health & beauty > cosmetics': [
+                'makeup', 'cosmetics', 'lipstick', 'foundation', 'mascara', 'eyeshadow'
+            ],
+            'health & beauty > fragrances': [
+                'perfume', 'cologne', 'fragrance', 'scent'
+            ],
+            
+            # Sports & Recreation
+            'sports & recreation > exercise & fitness': [
+                'fitness', 'exercise', 'gym', 'workout', 'yoga', 'pilates', 'weights'
+            ],
+            'sports & recreation > outdoor recreation': [
+                'outdoor', 'camping', 'hiking', 'fishing', 'hunting', 'backpack'
+            ],
+            'sports & recreation > team sports': [
+                'sports', 'football', 'basketball', 'soccer', 'baseball', 'tennis'
+            ],
+            
+            # Electronics
+            'electronics > computers': [
+                'computer', 'laptop', 'desktop', 'monitor', 'keyboard', 'mouse'
+            ],
+            'electronics > mobile phones & accessories': [
+                'phone', 'mobile', 'smartphone', 'case', 'charger', 'headphones'
+            ],
+            'electronics > audio & video': [
+                'audio', 'video', 'speaker', 'headphones', 'microphone', 'camera'
+            ],
+            
+            # Toys & Games
+            'toys & games > toys': [
+                'toy', 'doll', 'action figure', 'puzzle', 'game', 'board game'
+            ],
+            'toys & games > games': [
+                'game', 'puzzle', 'card game', 'board game', 'video game'
+            ],
+            
+            # Automotive
+            'automotive > automotive parts & accessories': [
+                'automotive', 'car', 'vehicle', 'tire', 'battery', 'oil', 'filter'
+            ],
+            
+            # Office Products
+            'office products > office supplies': [
+                'office', 'supplies', 'pen', 'pencil', 'paper', 'notebook', 'folder'
+            ],
+            'office products > furniture': [
+                'office furniture', 'desk', 'chair', 'filing cabinet', 'bookshelf'
+            ]
+        }
+        
+        # Check for matches (use word boundaries for more precise matching)
+        for category, keywords in category_mappings.items():
+            for keyword in keywords:
+                # Use word boundary matching for more precise categorization
+                if re.search(r'\b' + re.escape(keyword) + r'\b', text):
+                    return category
+        
+        # Default fallback
+        return 'general'
     
     def _save_created_product_to_db(self, jds_product: Dict[str, Any], shopify_product: Dict[str, Any], calculated_price: float) -> None:
         """Save created Shopify product to local database"""
@@ -558,6 +1020,30 @@ class ShopifyClient:
             if variant_id.startswith('gid://shopify/ProductVariant/'):
                 variant_id = variant_id.split('/')[-1]
             
+            # First, check if the variant exists by trying to fetch it
+            try:
+                check_response = self.session.get(
+                    f"https://{self.store}/admin/api/{self.api_version}/variants/{variant_id}.json",
+                    timeout=30
+                )
+                
+                if check_response.status_code == 404:
+                    return {
+                        'success': False,
+                        'error': 'Variant not found in Shopify - product may have been deleted',
+                        'variant_not_found': True
+                    }
+                elif check_response.status_code != 200:
+                    return {
+                        'success': False,
+                        'error': f'Failed to verify variant exists: HTTP {check_response.status_code}',
+                        'variant_not_found': True
+                    }
+                    
+            except Exception as check_error:
+                logger.warning(f"Could not verify variant existence: {check_error}")
+                # Continue with update attempt anyway
+            
             update_data = {
                 'variant': {
                     'id': int(variant_id),
@@ -577,8 +1063,30 @@ class ShopifyClient:
                     'message': f"Successfully updated price to ${new_price}"
                 }
             else:
-                error_data = response.json() if response.content else {}
-                error_message = error_data.get('errors', {}).get('base', ['Unknown error'])[0]
+                try:
+                    error_data = response.json() if response.content else {}
+                    errors = error_data.get('errors', {})
+                    
+                    # Handle different error response formats
+                    if isinstance(errors, dict):
+                        error_message = errors.get('base', ['Unknown error'])[0]
+                    elif isinstance(errors, list) and len(errors) > 0:
+                        error_message = errors[0]
+                    else:
+                        error_message = f"HTTP {response.status_code}: {response.text[:200]}"
+                        
+                except Exception as parse_error:
+                    logger.error(f"Error parsing Shopify API error response: {parse_error}")
+                    error_message = f"HTTP {response.status_code}: {response.text[:200]}"
+                
+                # Check if it's a 404 error (variant not found)
+                if response.status_code == 404:
+                    return {
+                        'success': False,
+                        'error': f"Variant not found in Shopify: {error_message}",
+                        'variant_not_found': True
+                    }
+                
                 return {
                     'success': False,
                     'error': f"Shopify API error: {error_message}"
@@ -735,11 +1243,30 @@ class ShopifyClient:
                     conn.commit()
                     conn.close()
                     
+                    # Clear cache after deleting product
+                    from cache_manager import clear_cache
+                    clear_cache()
+                    logger.info(f"Cleared cache after deleting product: {sku}")
+                    
                     deleted_count += 1
                     logger.info(f"Successfully rolled back product: {sku}")
                 else:
-                    error_data = response.json() if response.content else {}
-                    error_message = error_data.get('errors', {}).get('base', ['Unknown error'])[0]
+                    try:
+                        error_data = response.json() if response.content else {}
+                        errors_dict = error_data.get('errors', {})
+                        
+                        # Handle different error response formats
+                        if isinstance(errors_dict, dict):
+                            error_message = errors_dict.get('base', ['Unknown error'])[0]
+                        elif isinstance(errors_dict, list) and len(errors_dict) > 0:
+                            error_message = errors_dict[0]
+                        else:
+                            error_message = f"HTTP {response.status_code}: {response.text[:200]}"
+                            
+                    except Exception as parse_error:
+                        logger.error(f"Error parsing Shopify API error response: {parse_error}")
+                        error_message = f"HTTP {response.status_code}: {response.text[:200]}"
+                    
                     errors.append(f"Failed to delete {product.get('sku', 'unknown')}: {error_message}")
                 
             except Exception as e:

@@ -1,6 +1,7 @@
 # Environment variables
 .env
-
+node_modiles/
+.vercelignore
 # Python
 __pycache__/
 *.py[cod]

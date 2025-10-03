@@ -39,6 +39,12 @@
                 </ul>
                 <span class="navbar-text">
                     <span id="connection-status" class="badge bg-secondary">Checking...</span>
+                    <span id="upload-status-indicator" class="badge bg-warning" style="display: none; margin-left: 10px;">
+                        <span id="upload-status-text">Upload Running...</span>
+                        <div id="upload-progress-mini" style="width: 100px; height: 4px; background: #f0f0f0; border-radius: 2px; margin-top: 2px; overflow: hidden;">
+                            <div id="upload-progress-mini-bar" style="height: 100%; background: #28a745; width: 0%; transition: width 0.3s ease;"></div>
+                        </div>
+                    </span>
                 </span>
             </div>
         </div>
@@ -68,6 +74,137 @@
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     
+    <!-- Global Upload Status Monitor -->
+    <script>
+        // Global upload status monitoring
+        let uploadStatusInterval;
+        let lastUploadStatus = null;
+        
+        function startUploadStatusMonitoring() {
+            if (uploadStatusInterval) return;
+            
+            uploadStatusInterval = setInterval(checkUploadStatus, 2000);
+        }
+        
+        function stopUploadStatusMonitoring() {
+            if (uploadStatusInterval) {
+                clearInterval(uploadStatusInterval);
+                uploadStatusInterval = null;
+            }
+        }
+        
+        function checkUploadStatus() {
+            fetch('/api/upload/status')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const uploadProgress = data.upload_progress;
+                    const isRunning = data.is_running;
+                    const statusIndicator = document.getElementById('upload-status-indicator');
+                    const statusText = document.getElementById('upload-status-text');
+                    const progressBar = document.getElementById('upload-progress-mini-bar');
+                    
+                    if (isRunning) {
+                        statusIndicator.style.display = 'inline-block';
+                        
+                       // Update status text based on current phase
+                       if (uploadProgress.status === 'splitting_file') {
+                           const fileSplitting = uploadProgress.file_splitting || {};
+                           statusText.textContent = `Splitting: ${fileSplitting.chunks_created || 0}/${fileSplitting.total_chunks || 0}`;
+                           
+                           const percentage = fileSplitting.total_chunks > 0 ? 
+                               Math.round((fileSplitting.chunks_created / fileSplitting.total_chunks) * 100) : 0;
+                           progressBar.style.width = percentage + '%';
+                           
+                       } else if (uploadProgress.status === 'enriching_with_jds') {
+                           const jdsEnrichment = uploadProgress.jds_enrichment || {};
+                           statusText.textContent = `JDS Enrichment: ${jdsEnrichment.processed_skus || 0}/${jdsEnrichment.total_skus || 0}`;
+                           
+                           const percentage = jdsEnrichment.total_skus > 0 ? 
+                               Math.round((jdsEnrichment.processed_skus / jdsEnrichment.total_skus) * 100) : 0;
+                           progressBar.style.width = percentage + '%';
+                           
+                       } else if (uploadProgress.status === 'processing') {
+                           statusText.textContent = `Processing: ${uploadProgress.processed_products || 0}/${uploadProgress.total_products || 0}`;
+                           
+                           const percentage = uploadProgress.total_products > 0 ? 
+                               Math.round((uploadProgress.processed_products / uploadProgress.total_products) * 100) : 0;
+                           progressBar.style.width = percentage + '%';
+                           
+                       } else {
+                           statusText.textContent = 'Upload Starting...';
+                           progressBar.style.width = '10%';
+                       }
+                        
+                        // Update badge color based on status
+                        if (uploadProgress.status === 'splitting_file') {
+                            statusIndicator.className = 'badge bg-warning';
+                        } else if (uploadProgress.status === 'enriching_with_jds') {
+                            statusIndicator.className = 'badge bg-info';
+                        } else if (uploadProgress.status === 'processing') {
+                            statusIndicator.className = 'badge bg-primary';
+                        } else {
+                            statusIndicator.className = 'badge bg-secondary';
+                        }
+                        
+                    } else {
+                        // Upload not running
+                        statusIndicator.style.display = 'none';
+                        
+                        // If upload just completed, show a brief success message
+                        if (lastUploadStatus && lastUploadStatus.status === 'processing' && uploadProgress.status === 'completed') {
+                            showGlobalMessage('Upload completed successfully!', 'success');
+                        } else if (lastUploadStatus && lastUploadStatus.status === 'processing' && uploadProgress.status === 'error') {
+                            showGlobalMessage('Upload failed. Check logs for details.', 'error');
+                        }
+                    }
+                    
+                    lastUploadStatus = uploadProgress;
+                })
+                .catch(error => {
+                    console.error('Error checking upload status:', error);
+                });
+        }
+        
+        function showGlobalMessage(message, type) {
+            // Create a temporary message element
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `alert alert-${type === 'error' ? 'danger' : 'success'} alert-dismissible fade show`;
+            messageDiv.style.position = 'fixed';
+            messageDiv.style.top = '20px';
+            messageDiv.style.right = '20px';
+            messageDiv.style.zIndex = '9999';
+            messageDiv.style.minWidth = '300px';
+            messageDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            document.body.appendChild(messageDiv);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (messageDiv.parentNode) {
+                    messageDiv.parentNode.removeChild(messageDiv);
+                }
+            }, 5000);
+        }
+        
+        // Start monitoring when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            startUploadStatusMonitoring();
+        });
+        
+        // Stop monitoring when page unloads
+        window.addEventListener('beforeunload', function() {
+            stopUploadStatusMonitoring();
+        });
+    </script>
+    
     <!-- Shopify App Bridge Initialization -->
     <script>
         // Initialize Shopify App Bridge if we're in a Shopify admin context
@@ -84,7 +221,7 @@
             
             if (shop && host) {
                 const appBridge = createApp({
-                    apiKey: '{{ app.config.get("SHOPIFY_API_KEY", "") }}',
+                    apiKey: '{{ shopify_api_key or "" }}',
                     host: host,
                     forceRedirect: true
                 });
@@ -114,6 +251,7 @@
             }
         }
     </script>
+    
     
     <!-- Custom JS -->
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>

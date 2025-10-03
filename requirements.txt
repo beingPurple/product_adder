@@ -3,6 +3,8 @@ Flask-WTF==1.2.1
 requests==2.31.0
 python-dotenv==1.0.0
 gunicorn==21.2.0
+pandas==2.1.4
+openpyxl==3.1.2
 # Phase 5: Performance and Monitoring
 # Note: Using built-in Python modules for caching and monitoring
 # No additional dependencies required for Phase 5 features

@@ -107,6 +107,10 @@ class DataSyncManager:
             # Add validation
             if result.get('success', False):
                 result['validated'] = self._validate_jds_data()
+                # Clear cache after successful sync
+                from cache_manager import clear_cache
+                clear_cache()
+                logger.info("Cleared cache after JDS data sync")
             
             return result
             
@@ -134,6 +138,10 @@ class DataSyncManager:
             # Add validation
             if result.get('success', False):
                 result['validated'] = self._validate_shopify_data()
+                # Clear cache after successful sync
+                from cache_manager import clear_cache
+                clear_cache()
+                logger.info("Cleared cache after Shopify data sync")
             
             return result
             
@@ -187,6 +195,31 @@ class DataSyncManager:
                 product_dict['pricing_valid'] = pricing_validation['is_valid']
                 product_dict['pricing_warnings'] = pricing_validation['warnings']
                 product_dict['pricing_errors'] = pricing_validation['errors']
+                
+                # Filter out products that are unavailable or have $0 prices
+                product_name = product_dict.get('name', '').lower()
+                recommended_price = product_dict.get('recommended_price', 0)
+                less_than_case_price = product_dict.get('less_than_case_price', 0)
+                
+                # Debug logging for first few products
+                if len(products_with_pricing) < 3:
+                    logger.info(f"Debug product {len(products_with_pricing)}: SKU={product_dict.get('sku', 'N/A')}, "
+                              f"less_than_case_price={less_than_case_price}, "
+                              f"recommended_price={recommended_price}")
+                
+                # Skip products that are unavailable or have $0 prices
+                if ('unavailable' in product_name or 
+                    less_than_case_price == 0 or 
+                    less_than_case_price is None):
+                    if len(products_with_pricing) < 5:
+                        logger.info(f"Filtered out product {product_dict.get('sku', 'N/A')}: unavailable or $0 price")
+                    continue
+                
+                # Only skip if recommended_price is 0 AND we have no valid pricing data
+                if recommended_price == 0 and less_than_case_price == 0:
+                    if len(products_with_pricing) < 5:
+                        logger.info(f"Filtered out product {product_dict.get('sku', 'N/A')}: no valid pricing data")
+                    continue
                 
                 products_with_pricing.append(product_dict)
             

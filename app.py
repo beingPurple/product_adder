@@ -92,7 +92,7 @@ def shopify_auth_callback():
 
 @app.route('/')
 def index():
-    """Main dashboard showing sync status and statistics"""
+    """Main SKU search page"""
     try:
         # Check if we have the required environment variables
         missing_vars = []
@@ -103,62 +103,408 @@ def index():
         if not os.environ.get('EXTERNAL_API_TOKEN'):
             missing_vars.append('EXTERNAL_API_TOKEN')
         
+        # Get comparison stats and sync status for the template
+        comparison_stats = get_sku_comparison_stats()
+        sync_status = get_sync_status()
+        
         if missing_vars:
             return render_template('index.html', 
-                                 sync_status={'error': f'Missing environment variables: {", ".join(missing_vars)}'},
-                                 comparison_stats={'error': 'Configuration incomplete'},
+                                 setup_required=True,
+                                 missing_vars=missing_vars,
+                                 comparison_stats=comparison_stats,
+                                 sync_status=sync_status,
                                  api_key=app.config['API_KEY'],
-                                 setup_required=True)
-        
-        # Get sync status and statistics
-        sync_status = get_sync_status()
-        comparison_stats = get_sku_comparison_stats()
-        
-        # Check if we're in Vercel environment and show appropriate warning
-        is_vercel = os.environ.get('VERCEL', False)
+                                 shopify_api_key=app.config.get('SHOPIFY_API_KEY', ''))
         
         return render_template('index.html', 
-                             sync_status=sync_status,
+                             setup_required=False,
                              comparison_stats=comparison_stats,
+                             sync_status=sync_status,
                              api_key=app.config['API_KEY'],
-                             is_vercel=is_vercel)
+                             shopify_api_key=app.config.get('SHOPIFY_API_KEY', ''))
     except Exception as e:
-        logger.error(f"Error loading dashboard: {e}")
+        logger.error(f"Error loading SKU search page: {e}")
+        # Provide default values for template variables
+        default_stats = {
+            'jds_total': 0,
+            'shopify_total': 0,
+            'matched': 0,
+            'unmatched': 0,
+            'match_percentage': 0
+        }
+        default_sync_status = {
+            'jds_api_connected': False,
+            'shopify_api_connected': False,
+            'last_sync': None
+        }
         return render_template('index.html', 
-                             sync_status={'error': str(e)},
-                             comparison_stats={'error': 'Database error'},
+                             setup_required=True,
+                             error=str(e),
+                             comparison_stats=default_stats,
+                             sync_status=default_sync_status,
                              api_key=app.config['API_KEY'],
-                             setup_required=True)
+                             shopify_api_key=app.config.get('SHOPIFY_API_KEY', ''))
 
-# Phase 3 Routes - Product List Views
+# SKU Search and Add Routes
 
-@app.route('/products/new')
-def new_products():
-    """View products ready to add to Shopify"""
+@app.route('/api/sku/search', methods=['POST'])
+@time_api_call('/api/sku/search', 'POST')
+def search_sku():
+    """Search for a specific SKU and return product details"""
     try:
-        return render_template('product_list.html')
+        if not request.is_json:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        data = request.json
+        sku = data.get('sku', '').strip()
+        
+        if not sku:
+            return jsonify({'error': 'SKU is required'}), 400
+        
+        # Use existing JDS client to fetch product details
+        jds_client = JDSClient()
+        products = jds_client.fetch_product_details([sku])
+        
+        if not products:
+            return jsonify({
+                'success': False,
+                'message': f'No product found for SKU: {sku}',
+                'sku': sku
+            })
+        
+        product = products[0]  # Get the first (and should be only) product
+        
+        # Map JDS API field names to pricing calculator expected field names
+        pricing_data = {
+            'less_than_case_price': product.get('lessThanCasePrice'),
+            'one_case': product.get('oneCase'),
+            'five_cases': product.get('fiveCases'),
+            'ten_cases': product.get('tenCases'),
+            'twenty_cases': product.get('twentyCases'),
+            'forty_cases': product.get('fortyCases'),
+            'case_quantity': product.get('caseQuantity')
+        }
+        
+        # Add image URLs to the product data
+        product['image_url'] = product.get('image', '')
+        product['thumbnail_url'] = product.get('thumbnail', '')
+        product['quick_image_url'] = product.get('quickImage', '')
+        
+        # Calculate pricing using existing pricing calculator
+        pricing_validation = pricing_calculator.validate_pricing_data(pricing_data)
+        product['calculated_prices'] = pricing_validation['calculated_prices']
+        product['recommended_price'] = pricing_validation['recommended_price']
+        product['pricing_valid'] = pricing_validation['is_valid']
+        product['pricing_warnings'] = pricing_validation['warnings']
+        product['pricing_errors'] = pricing_validation['errors']
+        
+        # Check if product already exists in Shopify (both local DB and live API)
+        from database import get_shopify_price_for_sku
+        from shopify_client import ShopifyClient
+        
+        # First check local database
+        shopify_price = get_shopify_price_for_sku(sku)
+        product['already_in_shopify'] = shopify_price is not None
+        product['current_shopify_price'] = shopify_price
+        
+        # Also check live Shopify API for real-time verification
+        try:
+            shopify_client = ShopifyClient()
+            live_check = shopify_client.check_product_exists_by_sku(sku)
+            
+            if live_check['exists']:
+                # Product exists in live Shopify
+                product['shopify_live_exists'] = True
+                product['shopify_live_price'] = live_check['product']['price']
+                product['shopify_live_title'] = live_check['product']['title']
+                
+                # If local DB says it doesn't exist but live API says it does, sync in background
+                if not product['already_in_shopify']:
+                    logger.info(f"Product {sku} exists in live Shopify but not in local DB - requesting background sync")
+                    # Request background sync for this specific SKU
+                    from background_sync import background_sync_manager
+                    sync_requested = background_sync_manager.request_sync(sku)
+                    
+                    if sync_requested:
+                        product['background_sync_started'] = True
+                    else:
+                        # Check if already completed or pending
+                        sync_status = background_sync_manager.get_sync_status(sku)
+                        if sync_status == 'completed':
+                            product['background_sync_completed'] = True
+                        elif sync_status == 'pending':
+                            product['background_sync_started'] = True
+                        elif sync_status == 'failed':
+                            product['background_sync_failed'] = True
+                            product['background_sync_error'] = background_sync_manager.get_sync_error(sku)
+            else:
+                # Product doesn't exist in live Shopify
+                product['shopify_live_exists'] = False
+                product['shopify_live_price'] = None
+                product['shopify_live_title'] = None
+                
+                # If local DB says it exists but live API says it doesn't, mark as deleted
+                if product['already_in_shopify']:
+                    logger.info(f"Product {sku} exists in local DB but not in live Shopify - marking as deleted")
+                    from database import mark_product_as_deleted
+                    mark_product_as_deleted(sku)
+                    product['already_in_shopify'] = False
+                    product['current_shopify_price'] = None
+                    product['background_sync_completed'] = True
+                    
+        except Exception as e:
+            logger.error(f"Error checking live Shopify status for SKU {sku}: {e}")
+            product['shopify_live_exists'] = None  # Unknown due to error
+            product['shopify_live_error'] = str(e)
+        
+        record_metric("sku_search_success", 1)
+        
+        return jsonify({
+            'success': True,
+            'product': product,
+            'sku': sku
+        })
+        
     except Exception as e:
-        logger.error(f"Error loading new products page: {e}")
-        return f"Error loading new products page: {e}", 500
+        logger.error(f"Error searching SKU: {e}")
+        record_metric("sku_search_error", 1)
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/products/existing')
-def existing_products():
-    """View products that exist in both JDS and Shopify"""
+@app.route('/api/sync/status/<sku>', methods=['GET'])
+@time_api_call('/api/sync/status/<sku>', 'GET')
+def get_sync_status(sku):
+    """Get background sync status for a specific SKU"""
     try:
-        # Check if database has any data, if not, trigger a sync
-        from database import get_database_stats
-        db_stats = get_database_stats()
+        from background_sync import background_sync_manager
         
-        # If no products in database, show a message to sync first
-        if db_stats.get('total_products', 0) == 0:
-            return render_template('existing_products.html', 
-                                 sync_required=True, 
-                                 message="No products found. Please sync data first.")
+        status = background_sync_manager.get_sync_status(sku)
+        result = {
+            'success': True,
+            'sku': sku,
+            'status': status
+        }
         
-        return render_template('existing_products.html', sync_required=False)
+        if status == 'failed':
+            error = background_sync_manager.get_sync_error(sku)
+            if error:
+                result['error'] = error
+        
+        return jsonify(result)
+        
     except Exception as e:
-        logger.error(f"Error loading existing products page: {e}")
-        return f"Error loading existing products page: {e}", 500
+        logger.error(f"Error getting sync status for SKU {sku}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sku/add-to-shopify', methods=['POST'])
+@require_api_key
+@time_api_call('/api/sku/add-to-shopify', 'POST')
+def add_sku_to_shopify():
+    """Add a specific SKU to Shopify store"""
+    try:
+        if not request.is_json:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        data = request.json
+        sku = data.get('sku', '').strip()
+        
+        if not sku:
+            return jsonify({'error': 'SKU is required'}), 400
+        
+        # First, search for the product to get details
+        jds_client = JDSClient()
+        products = jds_client.fetch_product_details([sku])
+        
+        if not products:
+            return jsonify({
+                'success': False,
+                'error': f'No product found for SKU: {sku}'
+            })
+        
+        product = products[0]
+        
+        # Map JDS API field names to expected field names
+        product['image_url'] = product.get('image', '')
+        product['thumbnail_url'] = product.get('thumbnail', '')
+        product['quick_image_url'] = product.get('quickImage', '')
+        
+        # Map JDS API field names to pricing calculator expected field names
+        pricing_data = {
+            'less_than_case_price': product.get('lessThanCasePrice'),
+            'one_case': product.get('oneCase'),
+            'five_cases': product.get('fiveCases'),
+            'ten_cases': product.get('tenCases'),
+            'twenty_cases': product.get('twentyCases'),
+            'forty_cases': product.get('fortyCases'),
+            'case_quantity': product.get('caseQuantity')
+        }
+        
+        # Calculate pricing
+        pricing_validation = pricing_calculator.validate_pricing_data(pricing_data)
+        if not pricing_validation['is_valid']:
+            return jsonify({
+                'success': False,
+                'error': 'Product validation failed',
+                'validation_errors': pricing_validation['errors']
+            })
+        
+        # Check if already in Shopify
+        from database import get_shopify_price_for_sku
+        if get_shopify_price_for_sku(sku) is not None:
+            return jsonify({
+                'success': False,
+                'error': f'Product with SKU {sku} already exists in Shopify'
+            })
+        
+        # Create product in Shopify using existing functionality
+        shopify_client = ShopifyClient()
+        result = shopify_client.create_product_with_retry(product, pricing_validation['recommended_price'])
+        
+        if result['success']:
+            record_metric("sku_added_to_shopify", 1)
+        else:
+            record_metric("sku_add_failed", 1)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error adding SKU to Shopify: {e}")
+        record_metric("sku_add_error", 1)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sku/add-or-update-shopify', methods=['POST'])
+@require_api_key
+@time_api_call('/api/sku/add-or-update-shopify', 'POST')
+def add_or_update_sku_to_shopify():
+    """Add a new SKU to Shopify or update existing product price"""
+    try:
+        if not request.is_json:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        data = request.json
+        sku = data.get('sku', '').strip()
+        custom_price = data.get('custom_price')
+        
+        if not sku:
+            return jsonify({'error': 'SKU is required'}), 400
+        
+        # First, search for the product to get details
+        jds_client = JDSClient()
+        products = jds_client.fetch_product_details([sku])
+        
+        if not products:
+            return jsonify({
+                'success': False,
+                'error': f'No product found for SKU: {sku}'
+            })
+        
+        product = products[0]
+        
+        # Map JDS API field names to expected field names
+        product['image_url'] = product.get('image', '')
+        product['thumbnail_url'] = product.get('thumbnail', '')
+        product['quick_image_url'] = product.get('quickImage', '')
+        
+        # Map JDS API field names to pricing calculator expected field names
+        pricing_data = {
+            'less_than_case_price': product.get('lessThanCasePrice'),
+            'one_case': product.get('oneCase'),
+            'five_cases': product.get('fiveCases'),
+            'ten_cases': product.get('tenCases'),
+            'twenty_cases': product.get('twentyCases'),
+            'forty_cases': product.get('fortyCases'),
+            'case_quantity': product.get('caseQuantity')
+        }
+        
+        # Calculate pricing
+        pricing_validation = pricing_calculator.validate_pricing_data(pricing_data)
+        if not pricing_validation['is_valid']:
+            return jsonify({
+                'success': False,
+                'error': 'Product validation failed',
+                'validation_errors': pricing_validation['errors']
+            })
+        
+        # Use custom price if provided, otherwise use recommended price
+        if custom_price is not None:
+            try:
+                custom_price_float = float(custom_price)
+                if custom_price_float <= 0:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Custom price must be greater than 0'
+                    })
+                recommended_price = custom_price_float
+            except (ValueError, TypeError):
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid custom price format'
+                })
+        else:
+            recommended_price = pricing_validation['recommended_price']
+        
+        # Check if already in Shopify
+        from database import get_shopify_price_for_sku, get_shopify_variant_id_for_sku
+        existing_price = get_shopify_price_for_sku(sku)
+        variant_id = get_shopify_variant_id_for_sku(sku)
+        
+        if existing_price is not None and variant_id:
+            # Product exists in local DB, try to update the price
+            shopify_client = ShopifyClient()
+            result = shopify_client.update_product_price_with_retry(variant_id, recommended_price)
+            
+            if result['success']:
+                # Update the database with new price
+                from database import update_shopify_price_for_sku
+                update_shopify_price_for_sku(sku, recommended_price)
+                record_metric("sku_price_updated", 1)
+                price_type = "custom price" if custom_price is not None else "recommended price"
+                return jsonify({
+                    'success': True,
+                    'message': f'Successfully updated price for {product.get("name", sku)} to ${recommended_price:.2f} ({price_type})',
+                    'action': 'updated',
+                    'recommended_price': recommended_price
+                })
+            elif result.get('variant_not_found', False):
+                # Variant not found in Shopify, remove from local DB and create new product
+                logger.info(f"Variant {variant_id} not found in Shopify for SKU {sku}, creating new product")
+                from database import mark_product_as_deleted
+                mark_product_as_deleted(sku)
+                
+                # Fall through to create new product
+                shopify_client = ShopifyClient()
+            else:
+                record_metric("sku_update_failed", 1)
+                return jsonify({
+                    'success': False,
+                    'error': f'Failed to update price: {result.get("error", "Unknown error")}'
+                })
+        
+        # Product doesn't exist in local DB or variant was not found, create it
+        shopify_client = ShopifyClient()
+        result = shopify_client.create_product_with_retry(product, recommended_price)
+        
+        if result['success']:
+            record_metric("sku_added_to_shopify", 1)
+            price_type = "custom price" if custom_price is not None else "recommended price"
+            return jsonify({
+                'success': True,
+                'message': f'Successfully added {product.get("name", sku)} to Shopify at ${recommended_price:.2f} ({price_type})',
+                'action': 'added',
+                'recommended_price': recommended_price
+            })
+        else:
+            record_metric("sku_add_failed", 1)
+            return jsonify({
+                'success': False,
+                'error': f'Failed to add product: {result.get("error", "Unknown error")}'
+            })
+        
+    except Exception as e:
+        logger.error(f"Error adding/updating SKU to Shopify: {e}")
+        record_metric("sku_add_update_error", 1)
+        return jsonify({'error': str(e)}), 500
+
+# Removed product list views - not needed for simplified SKU search functionality
 
 # Phase 5: Performance and Monitoring Endpoints
 
@@ -512,11 +858,47 @@ def sync_shopify():
     except Exception as e:
         logger.error(f"Error syncing Shopify data: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sync/discover', methods=['POST'])
+@require_api_key
+@time_api_call('/api/sync/discover', 'POST')
+def discover_new_products():
+    """Discover and sync new JDS products not in Shopify"""
+    try:
+        data = request.json if request.is_json else {}
+        sample_skus = data.get('sample_skus', None)
+        
+        # Use the JDS client to discover new products
+        from jds_client import JDSClient
+        jds_client = JDSClient()
+        result = jds_client.discover_new_products(sample_skus)
+        
+        # Record the discovery operation
+        from database import record_sync_operation
+        record_sync_operation('discover_new_products', result.get('success', False), result.get('message', ''))
+        
+        # Record performance metrics
+        record_metric("discovery_success", 1 if result.get('success') else 0)
+        record_metric("new_products_discovered", result.get('count', 0))
+        
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error discovering new products: {e}")
+        record_metric("discovery_error", 1)
+        return jsonify({'error': str(e)}), 500
 @app.route('/api/sync/status')
 def sync_status():
     """Get current sync status and statistics"""
     try:
         status = get_sync_status()
+        
+        # Add last sync time information
+        from database import get_last_sync_time
+        last_sync = get_last_sync_time()
+        if last_sync:
+            status['last_sync'] = last_sync
+            status['time_since_sync'] = time.time() - last_sync
+        
         return jsonify(status)
     except Exception as e:
         logger.error(f"Error getting sync status: {e}")
@@ -530,7 +912,28 @@ def sync_all():
     try:
         start_time = time.time()
         force = request.json.get('force', False) if request.is_json else False
+        
+        # Check if sync was done recently (within 10 minutes) unless forced
+        if not force:
+            from database import get_last_sync_time
+            last_sync = get_last_sync_time()
+            if last_sync:
+                time_since_sync = time.time() - last_sync
+                if time_since_sync < 600:  # 10 minutes = 600 seconds
+                    remaining_time = 600 - time_since_sync
+                    return jsonify({
+                        'success': False,
+                        'message': f'Sync was performed recently. Please wait {int(remaining_time/60)} minutes and {int(remaining_time%60)} seconds before syncing again.',
+                        'last_sync': last_sync,
+                        'time_since_sync': time_since_sync,
+                        'cooldown_remaining': remaining_time
+                    }), 429  # Too Many Requests
+        
         result = sync_all_data(force=force)
+        
+        # Record the sync operation in database
+        from database import record_sync_operation
+        record_sync_operation('sync_all', result.get('success', False), result.get('message', ''))
         
         # Record performance metrics
         duration = time.time() - start_time
@@ -543,156 +946,34 @@ def sync_all():
         record_metric("sync_all_error", 1)
         return jsonify({'error': str(e)}), 500
 
+# Removed upload progress tracking - not needed for simplified SKU search functionality
 
-@app.route('/api/products/unmatched')
-def unmatched_products():
-    """Get JDS products ready to add to Shopify with calculated pricing"""
-    try:
-        logger.info("Getting products ready to add...")
-        
-        # Test database function directly first
-        from database import get_unmatched_products
-        unmatched_direct = get_unmatched_products()
-        logger.info(f"Database direct: {len(unmatched_direct)} products")
-        
-        # Test data_sync function
-        products = get_unmatched_products_with_pricing()
-        logger.info(f"Data sync function: {len(products)} products")
-        
-        return jsonify({
-            'success': True,
-            'count': len(products),
-            'products': products,
-            'debug': {
-                'database_direct': len(unmatched_direct),
-                'data_sync_function': len(products)
-            }
-        })
-    except Exception as e:
-        logger.error(f"Error getting products ready to add: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({'error': str(e)}), 500
+# Removed file splitting functionality - not needed for simplified SKU search
 
-@app.route('/api/products/matched')
-def matched_products():
-    """Get products that exist in both JDS and Shopify"""
-    try:
-        products = get_matched_products()
-        return jsonify({
-            'success': True,
-            'count': len(products),
-            'products': [p.to_dict() for p in products]
-        })
-    except Exception as e:
-        logger.error(f"Error getting existing products: {e}")
-        return jsonify({'error': str(e)}), 500
+# Error handler to ensure all errors return JSON
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {error}")
+    return jsonify({'error': 'Internal server error', 'message': str(error)}), 500
 
-@app.route('/api/products/matched-with-pricing')
-def matched_products_with_pricing():
-    """Get existing products with pricing analysis"""
-    try:
-        from database import get_matched_products_with_shopify_prices, get_database_stats
-        from pricing_calculator import pricing_calculator
-        
-        # Check if database is empty and auto-sync if needed
-        db_stats = get_database_stats()
-        if db_stats.get('total_products', 0) == 0:
-            logger.info("Database is empty, triggering auto-sync...")
-            try:
-                # Trigger a background sync
-                from data_sync import sync_all_data
-                sync_result = sync_all_data(force=True)
-                logger.info(f"Auto-sync completed: {sync_result.get('message', 'Unknown result')}")
-            except Exception as sync_error:
-                logger.warning(f"Auto-sync failed: {sync_error}")
-        
-        matched_products = get_matched_products_with_shopify_prices()
-        products_with_pricing = []
-        
-        for product_dict in matched_products:
-            # Debug: Log the product data types
-            logger.info(f"Product data types: {[(k, type(v)) for k, v in product_dict.items() if 'price' in k.lower()]}")
-            
-            # Convert all price-related fields to float to handle string inputs from database
-            price_fields = ['less_than_case_price', 'current_shopify_price', 'calculated_shopify_price', 
-                          'price_difference', 'price_difference_percent']
-            
-            for field in price_fields:
-                if field in product_dict:
-                    try:
-                        product_dict[field] = float(product_dict[field]) if product_dict[field] is not None else 0.0
-                    except (ValueError, TypeError):
-                        product_dict[field] = 0.0
-            
-            # Calculate what the Shopify price should be
-            pricing_validation = pricing_calculator.validate_pricing_data(product_dict)
-            product_dict['calculated_shopify_price'] = pricing_validation['recommended_price']
-            product_dict['pricing_valid'] = pricing_validation['is_valid']
-            product_dict['pricing_warnings'] = pricing_validation['warnings']
-            
-            # Calculate price difference (values are already converted to float above)
-            current_price = product_dict.get('current_shopify_price', 0)
-            calculated_price = product_dict.get('calculated_shopify_price', 0)
-            
-            if current_price and calculated_price:
-                price_diff = calculated_price - current_price
-                price_diff_percent = (price_diff / current_price * 100) if current_price > 0 else 0
-                product_dict['price_difference'] = price_diff
-                product_dict['price_difference_percent'] = price_diff_percent
-            else:
-                product_dict['price_difference'] = 0.0
-                product_dict['price_difference_percent'] = 0.0
-            
-            products_with_pricing.append(product_dict)
-        
-        return jsonify({
-            'success': True,
-            'count': len(products_with_pricing),
-            'products': products_with_pricing
-        })
-    except Exception as e:
-        import traceback
-        logger.error(f"Error getting matched products with pricing: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({'error': str(e)}), 500
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Not found', 'message': str(error)}), 404
 
-@app.route('/api/comparison/stats')
-def comparison_stats():
-    """Get SKU comparison statistics"""
-    try:
-        stats = get_sku_comparison_stats()
-        return jsonify(stats)
-    except Exception as e:
-        logger.error(f"Error getting comparison stats: {e}")
-        return jsonify({'error': str(e)}), 500
+@app.errorhandler(400)
+def bad_request(error):
+    return jsonify({'error': 'Bad request', 'message': str(error)}), 400
 
-@app.route('/api/pricing/calculate', methods=['POST'])
-@require_api_key
-def calculate_pricing():
-    """Calculate Shopify pricing for given JDS product data"""
-    try:
-        if not request.is_json:
-            return jsonify({'error': 'JSON data required'}), 400
-        
-        product_data = request.json
-        if 'less_than_case_price' not in product_data:
-            return jsonify({'error': 'less_than_case_price required'}), 400
-        
-        # Calculate pricing
-        validation = pricing_calculator.validate_pricing_data(product_data)
-        calculated_prices = pricing_calculator.calculate_all_tiers(product_data)
-        recommended_price = pricing_calculator.get_recommended_price(product_data)
-        
-        return jsonify({
-            'success': True,
-            'calculated_prices': calculated_prices,
-            'recommended_price': recommended_price,
-            'validation': validation
-        })
-    except Exception as e:
-        logger.error(f"Error calculating pricing: {e}")
-        return jsonify({'error': str(e)}), 500
+# Removed upload progress routes - not needed for simplified SKU search functionality
+
+# Removed all upload-related routes - not needed for simplified SKU search functionality
+
+# Removed all upload processing functions - not needed for simplified SKU search functionality
+
+
+# Removed product listing routes - not needed for simplified SKU search functionality
+
+# Removed pricing calculation route - not needed for simplified SKU search functionality
 
 @app.route('/api/test/connections')
 def test_connections():
@@ -724,401 +1005,25 @@ def test_connections():
         logger.error(f"Error testing connections: {e}")
         return jsonify({'error': str(e)}), 500
 
-# Phase 3 API Routes - Bulk Operations
+# Removed bulk operations and debug routes - not needed for simplified SKU search functionality
 
-@app.route('/api/products/bulk-add', methods=['POST'])
-@require_api_key
-def bulk_add_products():
-    """Add multiple products to Shopify"""
-    try:
-        if not request.is_json:
-            return jsonify({'error': 'JSON data required'}), 400
-        
-        data = request.json
-        skus = data.get('skus', [])
-        
-        if not skus:
-            return jsonify({'error': 'No SKUs provided'}), 400
-        
-        # Get product data for the selected SKUs
-        products = get_unmatched_products_with_pricing()
-        selected_products = [p for p in products if p['sku'] in skus]
-        
-        if not selected_products:
-            return jsonify({'error': 'No valid products found for selected SKUs'}), 400
-        
-        # Validate products before creation
-        validation_errors = []
-        validated_products = []
-        
-        for product in selected_products:
-            validation = pricing_calculator.validate_pricing_data(product)
-            if not validation['is_valid']:
-                validation_errors.append({
-                    'sku': product['sku'],
-                    'name': product['name'],
-                    'errors': validation['errors']
-                })
-            else:
-                validated_products.append({
-                    'jds_product': product,
-                    'calculated_price': validation['recommended_price']
-                })
-        
-        if validation_errors:
-            logger.warning(f"Validation failed for {len(validation_errors)} products")
-        
-        if not validated_products:
-            return jsonify({
-                'success': False,
-                'error': 'No valid products to create after validation',
-                'validation_errors': validation_errors
-            }), 400
-        
-        # Create products in Shopify
-        shopify_client = ShopifyClient()
-        result = shopify_client.create_products_bulk(validated_products)
-        
-        # Add validation errors to the result
-        if validation_errors:
-            result['validation_errors'] = validation_errors
-            result['validation_warnings'] = f"{len(validation_errors)} products failed validation"
-        
-        logger.info(f"Bulk product creation completed: {result['created_count']} created, {result['failed_count']} failed")
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Error adding products to Shopify: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/products/bulk-update-pricing', methods=['POST'])
-@require_api_key
-def bulk_update_pricing():
-    """Update pricing for multiple existing products"""
-    try:
-        if not request.is_json:
-            return jsonify({'error': 'JSON data required'}), 400
-        
-        data = request.json
-        skus = data.get('skus', [])
-        
-        if not skus:
-            return jsonify({'error': 'No SKUs provided'}), 400
-        
-        # Get existing products with pricing analysis
-        from database import get_matched_products_with_shopify_prices
-        from pricing_calculator import pricing_calculator
-        
-        existing_products = get_matched_products_with_shopify_prices()
-        selected_products = [p for p in existing_products if p['sku'] in skus]
-        
-        if not selected_products:
-            return jsonify({'error': 'No valid products found for selected SKUs'}), 400
-        
-        # Update prices in Shopify
-        shopify_client = ShopifyClient()
-        results = []
-        updated_count = 0
-        failed_count = 0
-        
-        for product in selected_products:
-            try:
-                # Calculate new price
-                validation = pricing_calculator.validate_pricing_data(product)
-                if not validation['is_valid']:
-                    results.append({
-                        'sku': product['sku'],
-                        'name': product['name'],
-                        'success': False,
-                        'error': f"Validation failed: {', '.join(validation['errors'])}"
-                    })
-                    failed_count += 1
-                    continue
-                
-                new_price = validation['recommended_price']
-                variant_id = product.get('variant_id')
-                
-                if not variant_id:
-                    results.append({
-                        'sku': product['sku'],
-                        'name': product['name'],
-                        'success': False,
-                        'error': 'No variant ID found'
-                    })
-                    failed_count += 1
-                    continue
-                
-                # Update price in Shopify with retry logic
-                update_result = shopify_client.update_product_price_with_retry(variant_id, new_price)
-                
-                if update_result['success']:
-                    # Update local database
-                    from database import db
-                    conn = db.connect()
-                    try:
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            'UPDATE shopify_products SET current_price = ?, last_updated = CURRENT_TIMESTAMP WHERE sku = ?',
-                            (new_price, product['sku'])
-                        )
-                        conn.commit()
-                    finally:
-                        try:
-                            conn.close()
-                        except Exception:
-                            logger.warning("Failed to close DB connection for sku=%s", product.get('sku'))
-                    results.append({
-                        'sku': product['sku'],
-                        'name': product['name'],
-                        'success': True,
-                        'old_price': product.get('current_shopify_price', 0),
-                        'new_price': new_price,
-                        'message': f"Updated from ${product.get('current_shopify_price', 0):.2f} to ${new_price:.2f}"
-                    })
-                    updated_count += 1
-                else:
-                    results.append({
-                        'sku': product['sku'],
-                        'name': product['name'],
-                        'success': False,
-                        'error': update_result['error']
-                    })
-                    failed_count += 1
-                    
-            except Exception as e:
-                logger.error(f"Error updating product {product.get('sku', 'unknown')}: {e}")
-                results.append({
-                    'sku': product['sku'],
-                    'name': product['name'],
-                    'success': False,
-                    'error': str(e)
-                })
-                failed_count += 1
-        
-        success = failed_count == 0
-        message = f"Bulk price update completed: {updated_count} updated, {failed_count} failed"
-        
-        logger.info(message)
-        
-        return jsonify({
-            'success': success,
-            'message': message,
-            'updated_count': updated_count,
-            'failed_count': failed_count,
-            'results': results
-        })
-        
-    except Exception as e:
-        logger.error(f"Error updating product pricing: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/products/create-single', methods=['POST'])
-@require_api_key
-def create_single_product():
-    """Create a single product in Shopify"""
-    try:
-        if not request.is_json:
-            return jsonify({'error': 'JSON data required'}), 400
-        
-        data = request.json
-        sku = data.get('sku')
-        
-        if not sku:
-            return jsonify({'error': 'SKU required'}), 400
-        
-        # Get product data
-        products = get_unmatched_products_with_pricing()
-        product = next((p for p in products if p['sku'] == sku), None)
-        
-        if not product:
-            return jsonify({'error': 'Product not found'}), 404
-        
-        # Validate product
-        validation = pricing_calculator.validate_pricing_data(product)
-        if not validation['is_valid']:
-            return jsonify({
-                'success': False,
-                'error': 'Product validation failed',
-                'validation_errors': validation['errors']
-            }), 400
-        
-        # Create product in Shopify with retry logic
-        shopify_client = ShopifyClient()
-        result = shopify_client.create_product_with_retry(product, validation['recommended_price'])
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Error creating single product: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/products/update-single-price', methods=['POST'])
-@require_api_key
-def update_single_price():
-    """Update price for a single product in Shopify"""
-    try:
-        if not request.is_json:
-            return jsonify({'error': 'JSON data required'}), 400
-        
-        data = request.json
-        sku = data.get('sku')
-        
-        if not sku:
-            return jsonify({'error': 'SKU required'}), 400
-        
-        # Get product data
-        from database import get_matched_products_with_shopify_prices
-        products = get_matched_products_with_shopify_prices()
-        product = next((p for p in products if p['sku'] == sku), None)
-        
-        if not product:
-            return jsonify({'error': 'Product not found'}), 404
-        
-        # Calculate new price
-        validation = pricing_calculator.validate_pricing_data(product)
-        if not validation['is_valid']:
-            return jsonify({
-                'success': False,
-                'error': 'Product validation failed',
-                'validation_errors': validation['errors']
-            }), 400
-        
-        new_price = validation['recommended_price']
-        variant_id = product.get('variant_id')
-        
-        if not variant_id:
-            return jsonify({'error': 'No variant ID found'}), 400
-        
-        # Update price in Shopify with retry logic
-        shopify_client = ShopifyClient()
-        result = shopify_client.update_product_price_with_retry(variant_id, new_price)
-        
-        if result['success']:
-            # Update local database
-            from database import db
-            conn = db.connect()
-            try:
-                cursor = conn.cursor()
-                cursor.execute(
-                    'UPDATE shopify_products SET current_price = ?, last_updated = CURRENT_TIMESTAMP WHERE sku = ?',
-                    (new_price, sku)
-                )
-                conn.commit()
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    logger.warning("Failed to close DB connection for sku=%s", sku)
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Error updating single product price: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/products/rollback', methods=['POST'])
-@require_api_key
-def rollback_products():
-    """Rollback created products by deleting them from Shopify"""
-    try:
-        if not request.is_json:
-            return jsonify({'error': 'JSON data required'}), 400
-        
-        data = request.json
-        created_products = data.get('created_products', [])
-        
-        if not created_products:
-            return jsonify({'error': 'No products provided for rollback'}), 400
-        
-        # Rollback products in Shopify
-        shopify_client = ShopifyClient()
-        result = shopify_client.rollback_created_products(created_products)
-        
-        logger.info(f"Rollback completed: {result['deleted_count']} deleted, {len(result.get('errors', []))} errors")
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Error rolling back products: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/debug/unmatched')
-@require_api_key
-def debug_unmatched():
-    """Debug endpoint to test unmatched products directly"""
-    try:
-        logger.info("Debug: Testing unmatched products directly...")
-        
-        # Test database function directly
-        from database import get_unmatched_products
-        unmatched = get_unmatched_products()
-        logger.info(f"Debug: Database function returned {len(unmatched)} products")
-        
-        # Test data_sync function
-        products_with_pricing = get_unmatched_products_with_pricing()
-        logger.info(f"Debug: Data sync function returned {len(products_with_pricing)} products")
-        
-        return jsonify({
-            'database_direct': len(unmatched),
-            'data_sync_function': len(products_with_pricing),
-            'products': products_with_pricing[:2] if products_with_pricing else []  # First 2 for debugging
-        })
-    except Exception as e:
-        logger.error(f"Debug error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/debug/database-state')
-@require_api_key
-def debug_database_state():
-    """Debug endpoint to check database state and Vercel environment"""
-    try:
-        from database import get_database_stats, db
-        import os
-        
-        db_stats = get_database_stats()
-        db_path = db.db_path
-        db_exists = os.path.exists(db_path)
-        db_size = os.path.getsize(db_path) if db_exists else 0
-        
-        return jsonify({
-            'vercel_environment': bool(os.environ.get('VERCEL')),
-            'database_path': db_path,
-            'database_exists': db_exists,
-            'database_size_bytes': db_size,
-            'database_stats': db_stats,
-            'environment_vars': {
-                'SHOPIFY_STORE': bool(os.environ.get('SHOPIFY_STORE')),
-                'SHOPIFY_ACCESS_TOKEN': bool(os.environ.get('SHOPIFY_ACCESS_TOKEN')),
-                'EXTERNAL_API_TOKEN': bool(os.environ.get('EXTERNAL_API_TOKEN')),
-            }
-        })
-    except Exception as e:
-        logger.error(f"Debug database state error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-# Initialize database on startup
+# Initialize database on startup (for Vercel)
 try:
     init_db()
     logger.info("Database initialized successfully")
     
-    # Auto-refresh product data on application reload
-    logger.info("Starting automatic product data refresh...")
-    try:
-        from data_sync import sync_all_data
-        sync_result = sync_all_data(force=True)
-        if sync_result.get('success', False):
-            logger.info(f"Auto-refresh completed successfully: {sync_result.get('message', 'Unknown result')}")
-        else:
-            logger.warning(f"Auto-refresh completed with issues: {sync_result.get('message', 'Unknown result')}")
-    except Exception as sync_error:
-        logger.warning(f"Auto-refresh failed: {sync_error}")
+    # Check if we're in Vercel and database is empty, trigger auto-sync
+    if os.environ.get('VERCEL'):
+        from database import get_database_stats
+        db_stats = get_database_stats()
+        if db_stats.get('total_products', 0) == 0:
+            logger.info("Vercel environment detected with empty database, triggering auto-sync...")
+            try:
+                from data_sync import sync_all_data
+                sync_result = sync_all_data(force=True)
+                logger.info(f"Auto-sync completed: {sync_result.get('message', 'Unknown result')}")
+            except Exception as sync_error:
+                logger.warning(f"Auto-sync failed: {sync_error}")
         
 except Exception as e:
     logger.warning(f"Database initialization warning: {e}")

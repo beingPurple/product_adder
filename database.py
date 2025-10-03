@@ -66,6 +66,8 @@ class SimpleDB:
                     quick_image_url TEXT,
                     available_quantity INTEGER,
                     local_quantity INTEGER,
+                    jds_deleted BOOLEAN DEFAULT FALSE,
+                    jds_deleted_at TIMESTAMP NULL,
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -79,6 +81,8 @@ class SimpleDB:
                     variant_id TEXT,
                     current_price REAL,
                     product_title TEXT,
+                    deleted BOOLEAN DEFAULT FALSE,
+                    deleted_at TIMESTAMP NULL,
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -86,6 +90,22 @@ class SimpleDB:
             # Create indexes for better performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_jds_products_sku ON jds_products(sku)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_shopify_products_sku ON shopify_products(sku)')
+            
+            # Add migration for deleted column if it doesn't exist
+            try:
+                cursor.execute('ALTER TABLE shopify_products ADD COLUMN deleted BOOLEAN DEFAULT FALSE')
+                cursor.execute('ALTER TABLE shopify_products ADD COLUMN deleted_at TIMESTAMP NULL')
+            except sqlite3.OperationalError:
+                # Column already exists, ignore
+                pass
+            
+            # Add migration for JDS deleted columns if they don't exist
+            try:
+                cursor.execute('ALTER TABLE jds_products ADD COLUMN jds_deleted BOOLEAN DEFAULT FALSE')
+                cursor.execute('ALTER TABLE jds_products ADD COLUMN jds_deleted_at TIMESTAMP NULL')
+            except sqlite3.OperationalError:
+                # Column already exists, ignore
+                pass
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_jds_products_updated ON jds_products(last_updated)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_shopify_products_updated ON shopify_products(last_updated)')
             
@@ -294,8 +314,8 @@ def get_unmatched_products():
         conn = db.connect()
         cursor = conn.cursor()
         
-        # Get all JDS products
-        cursor.execute('SELECT * FROM jds_products')
+        # Get all JDS products (excluding JDS-deleted)
+        cursor.execute('SELECT * FROM jds_products WHERE jds_deleted = FALSE OR jds_deleted IS NULL')
         jds_rows = cursor.fetchall()
         
         # Get all Shopify SKUs (cleaned)
@@ -330,8 +350,8 @@ def get_matched_products():
         cursor.execute('SELECT * FROM jds_products')
         jds_rows = cursor.fetchall()
         
-        # Get all Shopify SKUs (cleaned)
-        cursor.execute('SELECT sku FROM shopify_products')
+        # Get all Shopify SKUs (cleaned) excluding deleted products
+        cursor.execute('SELECT sku FROM shopify_products WHERE deleted = FALSE OR deleted IS NULL')
         shopify_rows = cursor.fetchall()
         shopify_skus = {clean_sku_for_comparison(row[0]) for row in shopify_rows}
         
@@ -412,6 +432,51 @@ def get_shopify_price_for_sku(sku):
         print(f"Error getting Shopify price for SKU {sku}: {e}")
         return None
 
+def get_shopify_variant_id_for_sku(sku):
+    """Get Shopify variant ID for a given SKU"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Clean the SKU for comparison
+        cleaned_sku = clean_sku_for_comparison(sku)
+        
+        # Find matching Shopify product
+        cursor.execute('SELECT variant_id FROM shopify_products WHERE sku = ?', (cleaned_sku,))
+        result = cursor.fetchone()
+        
+        conn.close()
+        
+        return result[0] if result else None
+        
+    except Exception as e:
+        print(f"Error getting Shopify variant ID for SKU {sku}: {e}")
+        return None
+
+def update_shopify_price_for_sku(sku, new_price):
+    """Update the current price for a SKU in the shopify_products table"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Clean the SKU for comparison
+        cleaned_sku = clean_sku_for_comparison(sku)
+        
+        # Update the price
+        cursor.execute(
+            'UPDATE shopify_products SET current_price = ?, last_updated = CURRENT_TIMESTAMP WHERE sku = ?',
+            (new_price, cleaned_sku)
+        )
+        
+        conn.commit()
+        conn.close()
+        
+        return cursor.rowcount > 0
+        
+    except Exception as e:
+        print(f"Error updating Shopify price for SKU {sku}: {e}")
+        return False
+
 def get_matched_products_with_shopify_prices():
     """Get matched products with their current Shopify prices"""
     try:
@@ -476,8 +541,8 @@ def get_unmatched_products_optimized(offset: int = 0, limit: int = 100) -> Tuple
         # Get Shopify SKUs for comparison (cached)
         shopify_skus = get_shopify_skus_cached()
         
-        # First, get all unmatched products to determine total count
-        cursor.execute('SELECT * FROM jds_products')
+        # First, get all unmatched products to determine total count (excluding JDS-deleted)
+        cursor.execute('SELECT * FROM jds_products WHERE jds_deleted = FALSE OR jds_deleted IS NULL')
         all_jds_rows = cursor.fetchall()
         
         unmatched_rows = []
@@ -609,13 +674,205 @@ def get_sku_comparison_stats_optimized() -> Dict[str, Any]:
         }
 
 @cached(ttl=600)  # Cache for 10 minutes
+def get_jds_skus() -> set:
+    """Get all SKUs from jds_products table (excluding JDS-deleted)"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT sku FROM jds_products WHERE sku IS NOT NULL AND sku != "" AND (jds_deleted = FALSE OR jds_deleted IS NULL)')
+        rows = cursor.fetchall()
+        skus = {row[0] for row in rows if row[0]}
+        
+        conn.close()
+        return skus
+        
+    except Exception as e:
+        logger.error(f"Error getting JDS SKUs: {e}")
+        return set()
+
+def get_all_shopify_skus() -> set:
+    """Get all SKUs from shopify_products table (excluding deleted)"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT sku FROM shopify_products WHERE deleted = FALSE OR deleted IS NULL')
+        rows = cursor.fetchall()
+        skus = {row[0] for row in rows if row[0]}
+        
+        conn.close()
+        return skus
+        
+    except Exception as e:
+        logger.error(f"Error getting Shopify SKUs: {e}")
+        return set()
+
+def remove_products_from_shopify_table(skus: List[str]) -> int:
+    """Remove products from shopify_products table (so they appear in ready-to-add)"""
+    try:
+        if not skus:
+            return 0
+            
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Use parameterized query for multiple SKUs
+        placeholders = ','.join('?' * len(skus))
+        cursor.execute(f'''
+            DELETE FROM shopify_products 
+            WHERE sku IN ({placeholders})
+        ''', skus)
+        
+        rows_affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        # Clear cache after removing products
+        if rows_affected > 0:
+            from cache_manager import clear_cache
+            clear_cache()
+            logger.info(f"Cleared cache after removing {rows_affected} products from shopify_products table: {skus}")
+        
+        logger.info(f"Removed {rows_affected} products from shopify_products table (returned to JDS): {skus}")
+        return rows_affected
+        
+    except Exception as e:
+        logger.error(f"Error removing products from shopify_products table: {e}")
+        return 0
+
+def handle_jds_deletions(skus: List[str]) -> int:
+    """
+    Handle products that were deleted from JDS catalog
+    
+    Logic:
+    - If product exists in Shopify: keep in JDS table but mark as JDS-deleted
+    - If product doesn't exist in Shopify: remove from JDS table entirely
+    """
+    try:
+        if not skus:
+            return 0
+            
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Check which of these SKUs exist in Shopify
+        placeholders = ','.join('?' * len(skus))
+        cursor.execute(f'''
+            SELECT sku FROM shopify_products 
+            WHERE sku IN ({placeholders}) AND (deleted = FALSE OR deleted IS NULL)
+        ''', skus)
+        
+        shopify_skus = {row[0] for row in cursor.fetchall()}
+        
+        # Products that exist in Shopify: mark as JDS-deleted but keep
+        shopify_kept_skus = list(shopify_skus & set(skus))
+        # Products that don't exist in Shopify: remove entirely
+        removed_skus = list(set(skus) - shopify_skus)
+        
+        total_handled = 0
+        
+        # Mark JDS products as deleted from JDS (but keep if in Shopify)
+        if shopify_kept_skus:
+            # Add a JDS-deleted flag (we'll need to add this column)
+            kept_placeholders = ','.join('?' * len(shopify_kept_skus))
+            cursor.execute(f'''
+                UPDATE jds_products 
+                SET jds_deleted = TRUE, jds_deleted_at = CURRENT_TIMESTAMP 
+                WHERE sku IN ({kept_placeholders})
+            ''', shopify_kept_skus)
+            kept_count = cursor.rowcount
+            total_handled += kept_count
+            logger.info(f"Marked {kept_count} JDS products as deleted from JDS (kept because in Shopify): {shopify_kept_skus}")
+        
+        # Remove JDS products that don't exist in Shopify
+        if removed_skus:
+            removed_placeholders = ','.join('?' * len(removed_skus))
+            cursor.execute(f'''
+                DELETE FROM jds_products 
+                WHERE sku IN ({removed_placeholders})
+            ''', removed_skus)
+            removed_count = cursor.rowcount
+            total_handled += removed_count
+            logger.info(f"Removed {removed_count} JDS products (not in Shopify): {removed_skus}")
+        
+        conn.commit()
+        conn.close()
+        
+        return total_handled
+        
+    except Exception as e:
+        logger.error(f"Error handling JDS deletions: {e}")
+        return 0
+
+def mark_products_as_deleted(skus: List[str]) -> int:
+    """Mark multiple products as deleted in the database"""
+    try:
+        if not skus:
+            return 0
+            
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Use parameterized query for multiple SKUs
+        placeholders = ','.join('?' * len(skus))
+        cursor.execute(f'''
+            UPDATE shopify_products 
+            SET deleted = TRUE, deleted_at = CURRENT_TIMESTAMP 
+            WHERE sku IN ({placeholders}) AND (deleted = FALSE OR deleted IS NULL)
+        ''', skus)
+        
+        rows_affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        # Clear cache after marking products as deleted
+        from cache_manager import clear_cache
+        clear_cache()
+        logger.info(f"Cleared cache after marking {rows_affected} products as deleted: {skus}")
+        
+        logger.info(f"Marked {rows_affected} products as deleted: {skus}")
+        return rows_affected
+        
+    except Exception as e:
+        logger.error(f"Error marking products as deleted: {e}")
+        return 0
+
+def mark_product_as_deleted(sku: str) -> bool:
+    """Mark a product as deleted in the database"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE shopify_products 
+            SET deleted = TRUE, deleted_at = CURRENT_TIMESTAMP 
+            WHERE sku = ?
+        ''', (sku,))
+        
+        rows_affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        # Clear cache after marking product as deleted
+        if rows_affected > 0:
+            from cache_manager import clear_cache
+            clear_cache()
+            logger.info(f"Cleared cache after marking product as deleted: {sku}")
+        
+        return rows_affected > 0
+        
+    except Exception as e:
+        logger.error(f"Error marking product as deleted: {e}")
+        return False
+
 def get_shopify_skus_cached() -> set:
     """Get Shopify SKUs with caching"""
     try:
         conn = db.connect()
         cursor = conn.cursor()
         
-        cursor.execute('SELECT sku FROM shopify_products WHERE sku IS NOT NULL AND sku != ""')
+        cursor.execute('SELECT sku FROM shopify_products WHERE sku IS NOT NULL AND sku != "" AND (deleted = FALSE OR deleted IS NULL)')
         rows = cursor.fetchall()
         shopify_skus = {clean_sku_for_comparison(row[0]) for row in rows}
         
@@ -746,3 +1003,54 @@ def get_database_stats() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error getting database stats: {e}")
         return {'error': str(e)}
+
+def get_last_sync_time() -> Optional[float]:
+    """Get the timestamp of the last sync operation"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Check if sync_logs table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_logs'")
+        if not cursor.fetchone():
+            return None
+        
+        # Get the most recent sync timestamp
+        cursor.execute("SELECT MAX(timestamp) FROM sync_logs WHERE operation = 'sync_all'")
+        result = cursor.fetchone()
+        return result[0] if result and result[0] else None
+    except Exception as e:
+        logger.error(f"Error getting last sync time: {e}")
+        return None
+
+def record_sync_operation(operation: str, success: bool = True, message: str = ""):
+    """Record a sync operation in the database"""
+    try:
+        conn = db.connect()
+        cursor = conn.cursor()
+        
+        # Create sync_logs table if it doesn't exist
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sync_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation TEXT NOT NULL,
+                success BOOLEAN NOT NULL,
+                message TEXT,
+                timestamp REAL NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Insert the sync record
+        import time
+        current_time = time.time()
+        cursor.execute("""
+            INSERT INTO sync_logs (operation, success, message, timestamp)
+            VALUES (?, ?, ?, ?)
+        """, (operation, success, message, current_time))
+        
+        conn.commit()
+        return current_time
+    except Exception as e:
+        logger.error(f"Error recording sync operation: {e}")
+        return None

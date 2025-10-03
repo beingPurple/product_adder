@@ -1,5 +1,9 @@
 # Product Adder - Shopify Catalog Monitor
 
+## Things to fix
+e
+
+
 ## Overview
 
 This application monitors the JDS Wholesale catalog, compares SKUs against a Shopify store's existing products, and provides a streamlined interface for adding new products to the store. It integrates with your existing pricing formulas and SKU handling policies.
@@ -37,11 +41,7 @@ product_adder/
 ### Phase 1: Foundation Setup (Week 1)
 
 **Goal**: Set up basic project structure and data collection
-
-**Tasks**:
-1. **Project Setup**
-   - Create Flask application structure
-   - Set up virtual environment and dependencies
+itemized
    - Configure environment variables (.env file)
    - Set up SQLite database with initial schema
 
@@ -168,7 +168,7 @@ product_adder/
    - Loading states and animations (but not at the cost of time or performance, so keep it minimal)
 
 **Deliverables**:
-- Complete web interface
+- Complete web interfaceitemized
 - Working bulk selection
 - Responsive design
 

@@ -156,6 +156,86 @@ class JDSClient:
                 except Exception:
                     pass
     
+    def discover_new_products(self, sample_skus: List[str] = None) -> Dict[str, Any]:
+        """
+        Discover new JDS products that aren't in Shopify yet
+        Uses a sample of SKUs to find new products in the JDS catalog
+        
+        Args:
+            sample_skus: Optional list of sample SKUs to test. If None, uses a default set.
+            
+        Returns:
+            Dictionary with discovery results
+        """
+        try:
+            if sample_skus is None:
+                # Use a broader sample of SKUs to discover new products
+                sample_skus = [
+                    "G2657", "G2658", "G2659", "G2660", "G2661",  # G series
+                    "LTM814", "LTM7305", "LGR641", "LPB004", "LWB101",  # L series
+                    "PET202", "PET203", "PET204", "PET205", "PET206",  # PET series
+                    "3D308", "3D311", "3D312", "3D313", "3D314",  # 3D series
+                    "ACG11", "ACG13", "ACG21", "ACG23", "ACG31"   # ACG series
+                ]
+            
+            logger.info(f"Discovering new products using {len(sample_skus)} sample SKUs")
+            
+            # Fetch product details for sample SKUs
+            products = self.fetch_product_details(sample_skus)
+            
+            if not products:
+                return {
+                    'success': False,
+                    'message': 'No products found in JDS API',
+                    'count': 0,
+                    'new_products': []
+                }
+            
+            # Check which products are already in our database
+            conn = db.connect()
+            cursor = conn.cursor()
+            cursor.execute("SELECT sku FROM jds_products")
+            existing_skus = {row[0] for row in cursor.fetchall()}
+            conn.close()
+            
+            new_products = []
+            synced_count = 0
+            errors = []
+            
+            for product_data in products:
+                sku = product_data.get('sku', '')
+                if sku and sku not in existing_skus:
+                    try:
+                        self._save_product_to_db(product_data)
+                        new_products.append({
+                            'sku': sku,
+                            'name': product_data.get('name', ''),
+                            'price': product_data.get('lessThanCasePrice', 0)
+                        })
+                        synced_count += 1
+                        logger.info(f"Discovered new product: {sku} - {product_data.get('name', '')[:50]}...")
+                    except Exception as e:
+                        error_msg = f"Error saving new product {sku}: {e}"
+                        logger.error(error_msg)
+                        errors.append(error_msg)
+            
+            return {
+                'success': True,
+                'message': f'Discovered {synced_count} new products',
+                'count': synced_count,
+                'new_products': new_products,
+                'errors': errors
+            }
+            
+        except Exception as e:
+            logger.error(f"Error discovering new products: {e}")
+            return {
+                'success': False,
+                'message': f'Error discovering new products: {str(e)}',
+                'count': 0,
+                'new_products': []
+            }
+    
     def sync_products(self, skus: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Sync products from JDS API to local database
