@@ -1,7 +1,7 @@
 # Product Adder - Shopify Catalog Monitor
 
 ## Things to fix
-e
+
 
 
 ## Overview
@@ -41,7 +41,11 @@ product_adder/
 ### Phase 1: Foundation Setup (Week 1)
 
 **Goal**: Set up basic project structure and data collection
-itemized
+ **Goal**: Set up basic project structure and data collection
+
+**Tasks**:
+1. **Project Setup**
+    - Configure environment variables (.env file)
    - Configure environment variables (.env file)
    - Set up SQLite database with initial schema
 
@@ -164,11 +168,11 @@ itemized
 
 4. **Styling** (`static/css/style.css`)
    - Clean, modern interface
-   - Responsive design
+- Complete web interface
    - Loading states and animations (but not at the cost of time or performance, so keep it minimal)
 
 **Deliverables**:
-- Complete web interfaceitemized
+- Complete web interface
 - Working bulk selection
 - Responsive design
 

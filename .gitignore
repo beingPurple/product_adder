@@ -1,7 +1,7 @@
 # Environment variables
 .env
-node_modiles/
-.vercelignore
+node_modules/
+// .vercelignore entry removed; no lines remain in this snippet
 # Python
 __pycache__/
 *.py[cod]

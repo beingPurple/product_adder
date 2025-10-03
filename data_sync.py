@@ -207,20 +207,17 @@ class DataSyncManager:
                               f"less_than_case_price={less_than_case_price}, "
                               f"recommended_price={recommended_price}")
                 
-                # Skip products that are unavailable or have $0 prices
-                if ('unavailable' in product_name or 
-                    less_than_case_price == 0 or 
-                    less_than_case_price is None):
+                # Skip products that are unavailable
+                if 'unavailable' in product_name:
                     if len(products_with_pricing) < 5:
-                        logger.info(f"Filtered out product {product_dict.get('sku', 'N/A')}: unavailable or $0 price")
+                        logger.info(f"Filtered out product {product_dict.get('sku', 'N/A')}: unavailable")
                     continue
                 
-                # Only skip if recommended_price is 0 AND we have no valid pricing data
-                if recommended_price == 0 and less_than_case_price == 0:
+                # Skip products with no valid pricing data
+                if (less_than_case_price == 0 or less_than_case_price is None) and recommended_price == 0:
                     if len(products_with_pricing) < 5:
                         logger.info(f"Filtered out product {product_dict.get('sku', 'N/A')}: no valid pricing data")
                     continue
-                
                 products_with_pricing.append(product_dict)
             
             return products_with_pricing

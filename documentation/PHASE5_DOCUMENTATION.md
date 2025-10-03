@@ -165,14 +165,14 @@ No additional environment variables are required for Phase 5 features. All optim
 ```python
 # Default cache settings
 DEFAULT_TTL = 300  # 5 minutes
-MAX_METRICS = 10000  # Maximum metrics to store
+MAX_CACHE_METRICS = 10000  # Maximum cache metrics to store
 MAX_CACHE_SIZE = 1000  # Maximum cache entries
 ```
 
 ### Performance Monitoring
 ```python
 # Performance monitoring settings
-MAX_METRICS = 10000  # Maximum metrics to store
+MAX_PERFORMANCE_METRICS = 10000  # Maximum performance metrics to store
 MAX_API_METRICS = 10000  # Maximum API metrics
 MAX_ERRORS = 1000  # Maximum errors to track
 ```

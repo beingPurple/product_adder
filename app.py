@@ -272,7 +272,7 @@ def search_sku():
 
 @app.route('/api/sync/status/<sku>', methods=['GET'])
 @time_api_call('/api/sync/status/<sku>', 'GET')
-def get_sync_status(sku):
+def get_sync_status_route(sku):
     """Get background sync status for a specific SKU"""
     try:
         from background_sync import background_sync_manager

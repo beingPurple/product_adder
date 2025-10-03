@@ -1,5 +1,11 @@
 {
-  "dependencies": {
-    "vercel": "^48.0.2"
+  "name": "product-adder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Product pricing calculator and adder application",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "vercel": "^48.1.6"
   }
 }

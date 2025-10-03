@@ -192,11 +192,14 @@ class JDSClient:
                 }
             
             # Check which products are already in our database
-            conn = db.connect()
-            cursor = conn.cursor()
-            cursor.execute("SELECT sku FROM jds_products")
-            existing_skus = {row[0] for row in cursor.fetchall()}
-            conn.close()
+            try:
+                conn = db.connect()
+                cursor = conn.cursor()
+                cursor.execute("SELECT sku FROM jds_products")
+                existing_skus = {row[0] for row in cursor.fetchall()}
+            finally:
+                if conn:
+                    conn.close()
             
             new_products = []
             synced_count = 0
